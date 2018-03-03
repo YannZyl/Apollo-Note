@@ -189,7 +189,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 #### <a name="共享数据初始化">共享数据初始化</a>
 
 ```
-<font color=#0099ff>file in apollo/modules/perception/perception.cc</font>
+/// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
   AdapterManager::Init(FLAGS_perception_adapter_config_filename);
 
@@ -211,9 +211,9 @@ void Perception::RegistAllOnboardClass() {
 
 以LiDARObjectData注册初始化为例，共享数据初始化分两步：
 
-(1) 对应共享数据类注册，注册LidarObjectData
+(1) 对应共享数据容器类注册，注册LidarObjectData
 ```
-<font color=#0099ff>file in apollo/modules/perception/obstacle/onboard/object_share_data.h</font>
+/// file in apollo/modules/perception/obstacle/onboard/object_share_data.h
 #define OBJECT_SHARED_DATA(data_name)                        \
   class data_name : public CommonSharedData<SensorObjects> { \
    public:                                                   \
@@ -249,6 +249,46 @@ OBJECT_SHARED_DATA(LidarObjectData);
 | std::map<std::string, SharedDataPtr<M>> SharedDataMap/data_map_ | -- | 共享数据存储容器map |
 | std::map<std::string, uint64_t> DataAddedTimeMap/data_added_time_map_ | -- | map中数据加入的时间戳，配合用于删除过时数据 |
 | CommonSharedDataStat stat_ | -- | 类操作记录: 增加数据次数，删除数据次数，获取数据次数 |
+
+由上表可知，第一步注册对应的LidarObjectData主要的工作是创建一个LiDar数据的容器类，用以数据的存储，删除与查询。数据以一定格式(ShareData子类)存储在map中，每个数据标有时间戳和设备id，并定时清楚旧数据。
+
+(2) 对应共享数据容器类实例化并保存，实例化LidarObjectData
+
+```
+/// file in apollo/modules/perception/obstacle/onboard/object_share_data.h
+#define OBJECT_SHARED_DATA(data_name)                        \
+  class data_name : public CommonSharedData<SensorObjects> { \
+   public:                                                   \
+    data_name() : CommonSharedData<SensorObjects>() {}       \
+    virtual ~data_name() {}                                  \
+    std::string name() const override {                      \
+      return #data_name;                                     \
+    }                                                        \
+    ...														 \
+  }
+
+REGISTER_SHAREDDATA(LidarObjectData);
+...
+
+/// file in apollo/modules/perception/onboard/shared_data.h
+#define REGISTER_SHAREDDATA(name) REGISTER_CLASS(SharedData, name)
+
+/// file in apollo/modules/perception/lib/base/registerer.h
+#define REGISTER_CLASS(clazz, name)                                           \
+  class ObjectFactory##name : public apollo::perception::ObjectFactory {      \
+   public:                                                                    \
+    virtual ~ObjectFactory##name() {}                                         \
+    virtual perception::Any NewInstance() {                                   \
+      return perception::Any(new name());                                     \
+    }                                                                         \
+  };                                                                          \
+  inline void RegisterFactory##name() {                                       \
+    perception::FactoryMap &map = perception::GlobalFactoryMap()[#clazz];     \
+    if (map.find(#name) == map.end()) map[#name] = new ObjectFactory##name(); \
+  }
+```
+
+由代码可知
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
