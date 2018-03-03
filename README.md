@@ -232,16 +232,23 @@ OBJECT_SHARED_DATA(LidarObjectData);
 
 | 名称 | 返回 | 备注 |
 | ---- | ---- | ---- |
-| Init | bool | 初始化标记 |
-| name | bool | 共享数据名称 |
-| Reset | void | 清空所有共享数据，当重置DAGStreaming时，ShareDataManager调用 |
-| RemoveStaleData | void | 清空共享数据map中过时数据，当前时刻-数据时间戳大于人工设定的共享数据过期时间，则清空 |
+| Init() | bool | 初始化标记 |
+| name() | bool | 共享数据名称 |
+| Reset() | void | 清空所有共享数据，当重置DAGStreaming时，ShareDataManager调用 |
+| RemoveStaleData() | void | 清空共享数据map中过时数据，当前时刻-数据时间戳大于人工设定的共享数据过期时间，则清空 |
 | Add(const std::string &key, const SharedDataPtr<M> &data) | bool | 根据键-值对添加新的共享数据，key为字符串类型 |
 | Add(const CommonSharedDataKey &key, const SharedDataPtr<M> &data) | bool | 根据键-值对添加新的共享数据 ，key为CommonSharedDataKey类型(包含时间戳与设备id) |
 | Get(const std::string &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，key为字符串类型 |
 | Get(const CommonSharedDataKey &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，key为CommonSharedDataKey类型(包含时间戳与设备id) |
 | Pop(const std::string &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为字符串类型 |
 | Pop(const CommonSharedDataKey &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为CommonSharedDataKey类型(包含时间戳与设备id) |
+| Remove(const std::string &key) | bool | 根据key删除共享数据，key为字符串类型 |
+| Remove(const CommonSharedDataKey &key) | bool | 根据key删除共享数据，key为CommonSharedDataKey类型(包含时间戳与设备id) |
+| Size() | unsingned | 共享数据类map中存储的数据量 |
+| GetStat() | CommonSharedDataStat | 返回类操作记录，增加数据次数，删除数据次数，获取数据次数 |
+| std::map<std::string, SharedDataPtr<M>> SharedDataMap/data_map_ | -- | 共享数据存储容器map |
+| std::map<std::string, uint64_t> DataAddedTimeMap/data_added_time_map_ | -- | map中数据加入的时间戳，配合用于删除过时数据 |
+| CommonSharedDataStat stat_ | -- | 类操作记录: 增加数据次数，删除数据次数，获取数据次数 |
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
