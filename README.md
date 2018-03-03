@@ -184,7 +184,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_software_arch.png)
 
-感知模块框架本只是一个DAG有向图，该图由3类基本元素组成，包括：子节点Sub Node，边Edge和共享数据Share Data。框架中的每一个功能都以子节点SubNode的形式存在，以线程形式运行；子节点之间的共享数据ShareData沿着边Edge有向流行，从产生子节点流向需求子节点。上图中第二行分别初始化共享数据，子节点以及DAG，最终DAG运行完成感知功能。
+感知模块框架本质是一个DAG有向图，该图由3类基本元素组成，包括：**子节点Sub Node**，**边Edge**和**共享数据Share Data**。框架中的每一个功能都以子节点SubNode的形式存在，以线程形式运行；子节点之间的共享数据ShareData沿着边Edge有向流行，从产生子节点流向需求子节点。上图中第二行分别初始化共享数据，子节点以及DAG，最终DAG运行完成感知功能。
 
 #### <a name="共享数据初始化">共享数据初始化</a>
 
