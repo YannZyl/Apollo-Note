@@ -229,12 +229,14 @@ OBJECT_SHARED_DATA(LidarObjectData);
 ...
 ```
 该过程通过宏注册对应的共享数据类，继承CommonSharedData基础类，其中CommonSharedData类包含的元素如下
+
 | 名称 | 返回类型 | 属性 | 备注 |
 | ---- | -------- | ---- | ---- |
 | Init | bool | 成员函数 | 初始化标记 |
 | name | bool | 成员函数 | 共享数据名称 |
 | Reset | void | 成员函数 | 清空所有共享数据，当重置DAGStreaming时，ShareDataManager调用 |
 | RemoveStaleData | void | 成员函数 | 清空共享数据map中过时数据，当前时刻-数据时间戳大于人工设定的共享数据过期时间，则清空 |
+
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
