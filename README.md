@@ -271,14 +271,14 @@ REGISTER_SHAREDDATA(LidarObjectData);
 ...
 
 /// file in apollo/modules/perception/onboard/shared_data.h
+#define REGISTER_SHAREDDATA(name) REGISTER_CLASS(SharedData, name)
+
+/// file in apollo/modules/perception/lib/base/registerer.h
 
 typedef std::map<std::string, ObjectFactory *> FactoryMap;
 typedef std::map<std::string, FactoryMap> BaseClassMap;
 BaseClassMap &GlobalFactoryMap();
 
-#define REGISTER_SHAREDDATA(name) REGISTER_CLASS(SharedData, name)
-
-/// file in apollo/modules/perception/lib/base/registerer.h
 #define REGISTER_CLASS(clazz, name)                                           \
   class ObjectFactory##name : public apollo::perception::ObjectFactory {      \
    public:                                                                    \
