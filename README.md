@@ -189,7 +189,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 #### <a name="共享数据初始化">共享数据初始化</a>
 
 ```
-file in apollo/modules/perception/perception.cc
+<font color=#0099ff>file in apollo/modules/perception/perception.cc</font>
 Status Perception::Init() {
   AdapterManager::Init(FLAGS_perception_adapter_config_filename);
 
@@ -213,7 +213,7 @@ void Perception::RegistAllOnboardClass() {
 
 (1) 对应共享数据类注册，注册LidarObjectData
 ```
-file in apollo/modules/perception/obstacle/onboard/object_share_data.h
+<font color=#0099ff>file in apollo/modules/perception/obstacle/onboard/object_share_data.h</font>
 #define OBJECT_SHARED_DATA(data_name)                        \
   class data_name : public CommonSharedData<SensorObjects> { \
    public:                                                   \
@@ -230,13 +230,18 @@ OBJECT_SHARED_DATA(LidarObjectData);
 ```
 该过程通过宏注册对应的共享数据类，继承CommonSharedData基础类，其中CommonSharedData类包含的元素如下
 
-| 名称 | 返回类型 | 属性 | 备注 |
-| ---- | -------- | ---- | ---- |
-| Init | bool | 成员函数 | 初始化标记 |
-| name | bool | 成员函数 | 共享数据名称 |
-| Reset | void | 成员函数 | 清空所有共享数据，当重置DAGStreaming时，ShareDataManager调用 |
-| RemoveStaleData | void | 成员函数 | 清空共享数据map中过时数据，当前时刻-数据时间戳大于人工设定的共享数据过期时间，则清空 |
-
+| 名称 | 返回 | 备注 |
+| ---- | ---- | ---- |
+| Init | bool | 初始化标记 |
+| name | bool | 共享数据名称 |
+| Reset | void | 清空所有共享数据，当重置DAGStreaming时，ShareDataManager调用 |
+| RemoveStaleData | void | 清空共享数据map中过时数据，当前时刻-数据时间戳大于人工设定的共享数据过期时间，则清空 |
+| Add(const std::string &key, const SharedDataPtr<M> &data) | bool | 根据键-值对添加新的共享数据，key为字符串类型 |
+| Add(const CommonSharedDataKey &key, const SharedDataPtr<M> &data) | bool | 根据键-值对添加新的共享数据 ，key为CommonSharedDataKey类型(包含时间戳与设备id) |
+| Get(const std::string &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，key为字符串类型 |
+| Get(const CommonSharedDataKey &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，key为CommonSharedDataKey类型(包含时间戳与设备id) |
+| Pop(const std::string &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为字符串类型 |
+| Pop(const CommonSharedDataKey &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为CommonSharedDataKey类型(包含时间戳与设备id) |
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
