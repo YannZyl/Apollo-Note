@@ -161,7 +161,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 定位模块从不同的信息源，如GPS(经纬度)，LiDAR(距离)和IMU(加速度等)来评估车辆当前的信息。常用的定位技术有两类：
 
-- 基于RTK(Real-Time Kinematic, 实时动态载波相位差分技术)定位。由OnTimer函数以一定评率触发定位。
+- 基于RTK(Real-Time Kinematic, 实时动态载波相位差分技术)定位。由OnTimer函数以一定频率触发定位。
 - 多传感器融合(Multiple Sensor Fusion, MSF)定位。由一系列传感器触发函数触发。
 
 #### <a name="定位模块输入">定位模块输入数据</a>
@@ -178,7 +178,27 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 ## <a name="感知模块详解">2. 感知模块笔记</a>
 
+本章节主要详细的解析Apollo 2.0感知模块Perception代码与功能结构，相关资料请参考([Perception: 3D Obstacles](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/3d_obstacle_perception.md)和[Percepton: Traffic Light](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/traffic_light.md))
+
 ### <a name="代码层次结构">2.1 代码层次结构图</a>
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_software_arch.png)
+
+感知模块框架本只是一个DAG有向图，该图由3类基本元素组成，包括：子节点Sub Node，边Edge和共享数据Share Data。框架中的每一个功能都以子节点SubNode的形式存在，以线程形式运行；子节点之间的共享数据ShareData沿着边Edge有向流行，从产生子节点流向需求子节点。上图中第二行分别初始化共享数据，子节点以及DAG，最终DAG运行完成感知功能。
+
+#### <a name="共享数据初始化">共享数据初始化</a>
+
+```
+void Perception::RegistAllOnboardClass() {
+  /// regist sharedata
+  RegisterFactoryLidarObjectData();
+  RegisterFactoryRadarObjectData();
+  traffic_light::RegisterFactoryTLPreprocessingData();
+  ...
+}
+```
+共享数据包含3类，分别为：
+- LiDARObjectData/雷达数据 
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
