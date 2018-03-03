@@ -371,7 +371,7 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，
 | SubCameraImage(boost::shared_ptr<const sensor_msgs::Image> msg, CameraId camera_id) | void | 主体函数，获取图像，相机选择，图像处理等 |
 | CameraSelection(double ts) | void | 相机选择，在SubCameraImage函数中被调用 |
 | VerifyLightsProjection(std::shared_ptr<ImageLights> image_lights) | bool | 验证信号灯映射，在SubCameraImage函数中被调用 |
-| GetSignals(double ts, CarPose \*pose, std::vector<apollo::hdmap::Signal> \*signals) | 获取汽车姿态与图像信息，，在SubCameraImage函数中被调用 |
+| GetSignals(double ts, CarPose \*pose, std::vector<apollo::hdmap::Signal> \*signals) | bool |获取汽车姿态与图像信息，，在SubCameraImage函数中被调用 |
 | GetCarPose(const double ts, CarPose \*pose) | bool | 获取汽车姿态信息，在GetSignals函数被调用 |
 | TLPreprocessor preprocessor_ | -- | 预处理器 |
 | TLPreprocessingData \*preprocessing_data_ | -- | 预处理共享数据容器类指针 |
