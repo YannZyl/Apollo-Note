@@ -238,10 +238,10 @@ OBJECT_SHARED_DATA(LidarObjectData);
 | RemoveStaleData() | void | 清空共享数据map中过时数据，当前时刻-数据时间戳大于人工设定的共享数据过期时间，则清空 |
 | Add(const std::string &key, const SharedDataPtr<M> &data) | bool | 根据键-值对添加新的共享数据，key为字符串类型 |
 | Add(const CommonSharedDataKey &key, const SharedDataPtr<M> &data) | bool | 根据键-值对添加新的共享数据 ，key为CommonSharedDataKey类型(包含时间戳与设备id) |
-| Get(const std::string &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，key为字符串类型 |
-| Get(const CommonSharedDataKey &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，key为CommonSharedDataKey类型(包含时间戳与设备id) |
-| Pop(const std::string &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为字符串类型 |
-| Pop(const CommonSharedDataKey &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为CommonSharedDataKey类型(包含时间戳与设备id) |
+| Get(const std::string &key, SharedDataPtr<M> \*data) | bool | 由key获取共享数据，存储进data，key为字符串类型 |
+| Get(const CommonSharedDataKey &key, SharedDataPtr<M> \*data) | bool | 由key获取共享数据，存储进data，key为CommonSharedDataKey类型(包含时间戳与设备id) |
+| Pop(const std::string &key, SharedDataPtr<M> \*data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为字符串类型 |
+| Pop(const CommonSharedDataKey &key, SharedDataPtr<M> \*data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为CommonSharedDataKey类型(包含时间戳与设备id) |
 | Remove(const std::string &key) | bool | 根据key删除共享数据，key为字符串类型 |
 | Remove(const CommonSharedDataKey &key) | bool | 根据key删除共享数据，key为CommonSharedDataKey类型(包含时间戳与设备id) |
 | Size() | unsigned | 共享数据类map中存储的数据量 |
@@ -266,7 +266,6 @@ OBJECT_SHARED_DATA(LidarObjectData);
     }                                                        \
     ...                                                      \
   }
-
 REGISTER_SHAREDDATA(LidarObjectData);
 ...
 
@@ -274,7 +273,7 @@ REGISTER_SHAREDDATA(LidarObjectData);
 #define REGISTER_SHAREDDATA(name) REGISTER_CLASS(SharedData, name)
 
 /// file in apollo/modules/perception/lib/base/registerer.h
-typedef std::map<std::string, ObjectFactory *> FactoryMap;
+typedef std::map<std::string, ObjectFactory \*> FactoryMap;
 typedef std::map<std::string, FactoryMap> BaseClassMap;
 BaseClassMap &GlobalFactoryMap();
 
@@ -293,6 +292,86 @@ BaseClassMap &GlobalFactoryMap();
 ```
 
 总结可知REGISTER_SHAREDDATA宏实际是创建共享数据容器类实例化与保存函数，通过调用该宏生成的函数可以方便的实例化对应的容易类并添加至全局工厂管理类，方便管理所有共享数据实例。E.g. 当在perception.cc的RegistAllOnboardClass中调用RegisterFactoryLidarObjectData()时，实际是实例化对应的容器类LidarObjectData，最终存储进GlobalFactoryMap中，存储的形式为：GlobalFactory[SharedData][LidarObjectData]两级存储。
+
+#### <a name="子节点初始化">子节点SubNode初始化</a>
+```
+/// file in apollo/modules/perception/perception.cc
+Status Perception::Init() {
+  AdapterManager::Init(FLAGS_perception_adapter_config_filename);
+
+  RegistAllOnboardClass();
+  ...
+}
+void Perception::RegistAllOnboardClass() {
+  ...
+  /// regist subnode
+  RegisterFactoryLidarProcessSubnode();
+  RegisterFactoryRadarProcessSubnode();
+  RegisterFactoryFusionSubnode();
+  traffic_light::RegisterFactoryTLPreprocessorSubnode();
+  traffic_light::RegisterFactoryTLProcSubnode();
+}
+```
+
+子节点SubNode是程序中的某个功能块，每个子节点都是一个线程，在感知模块中，一共存在5个子节点：
+- LidarProcessSubnode/激光测距处理子节点，用于障碍物感知/3D Obstacle Perception
+- RadarProcessSubnode/雷达处理子节点，用于障碍物感知/3D Obstacle Perception
+- FusionSubnode/融合模式处理子节点，用于障碍物感知/3D Obstacle Perception
+- TLPreprocessSubnode/信号灯预处理子节点，用于信号灯感知/Traffic Light Perception
+- TLProcessSubnode/信号灯处理子节点，用于信号灯感知/Traffic Light Perception
+
+以TLPreprocessSubnode注册初始化为例，子节点初始化
+```
+/// file in apollo/modules/perception/onboard/tl_preprocessor_subnode.h
+class TLProcSubnode : public Subnode {
+ public:
+  ...
+ protected:
+  ...
+ private:
+ ...
+};
+REGISTER_SUBNODE(TLPreprocessorSubnode);
+
+/// file in apollo/modules/perception/onboard/subnode.h
+#define REGISTER_SUBNODE(name) REGISTER_CLASS(Subnode, name)
+
+/// file in apollo/modules/perception/lib/base/registerer.h
+typedef std::map<std::string, ObjectFactory \*> FactoryMap;
+typedef std::map<std::string, FactoryMap> BaseClassMap;
+BaseClassMap &GlobalFactoryMap();
+
+#define REGISTER_CLASS(clazz, name)                                           \
+  class ObjectFactory##name : public apollo::perception::ObjectFactory {      \
+   public:                                                                    \
+    virtual ~ObjectFactory##name() {}                                         \
+    virtual perception::Any NewInstance() {                                   \
+      return perception::Any(new name());                                     \
+    }                                                                         \
+  };                                                                          \
+  inline void RegisterFactory##name() {                                       \
+    perception::FactoryMap &map = perception::GlobalFactoryMap()[#clazz];     \
+    if (map.find(#name) == map.end()) map[#name] = new ObjectFactory##name(); \
+  }
+```
+
+与前小节类似，REGISTER_SUBNODE宏作用是生成对应的Subnode类，同时创建该Subnode类的实例化与保存函数，通过调用RegisterFactoryTLPreprocessSubnode可以方便的实例化该子节点类，并保存到全局工厂管理类中，存储的形式为：GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储。
+
+TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，该类主要包含的元素如下
+
+| 名称 | 返回 | 备注 |
+| ---- | ---- | ---- |
+| InitInternal() | bool | 内部初始化函数，初始化边界映射函数，共享数据，信号灯预处理器，高清地图等。 |
+| InitSharedData() | bool | 初始化共享数据类TLPreprocessingData，在InitInternal函数中被调用 |
+| InitPreprocessor() | bool | 初始化预处理器(实际做预处理工作类)，在InitInternal函数中被调用 |
+| InitHdmap() | bool | 初始化高清地图类，在InitInternal函数中被调用 |
+| AddDataAndPublishEvent(const std::shared_ptr<ImageLights> &data,const CameraId &camera_id, double timestamp) | bool | 将数据存储进共享数据实例的map中，并交由EventManager发布消息信息，在SubCameraImage函数中被调用 |
+| SubLongFocusCamera(const sensor_msgs::Image &msg) | void | 选择长焦摄像头回调函数，在InitInternal函数中被调用注册回调函数 |
+| SubShortFocusCamera(const sensor_msgs::Image &msg) | void | 选择短焦摄像头回调函数，在InitInternal函数中被调用注册回调函数 |
+| SubCameraImage(boost::shared_ptr<const sensor_msgs::Image> msg, CameraId camera_id) | void | 主体函数，获取图像，相机选择，图像筛选，验证灯光，发布信息等 |
+| CameraSelection(double ts) | void | 相机选择，在SubCameraImage函数中被调用 |
+| VerifyLightsProjection(std::shared_ptr<ImageLights> image_lights) | bool | 验证信号灯映射，在SubCameraImage函数中被调用 |
+| GetSignals(double ts, CarPose \*pose, std::vector<apollo::hdmap::Signal> \*signals) | 
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
