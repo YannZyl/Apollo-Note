@@ -250,7 +250,7 @@ OBJECT_SHARED_DATA(LidarObjectData);
 | std::map<std::string, uint64_t> DataAddedTimeMap/data_added_time_map_ | -- | map中数据加入的时间戳，配合用于删除过时数据 |
 | CommonSharedDataStat stat_ | -- | 类操作记录: 增加数据次数，删除数据次数，获取数据次数 |
 
-由上表可知，第一步注册对应的LidarObjectData主要的工作是创建一个LiDar数据的容器类，用以数据的存储，删除与查询。数据以一定格式(ShareData子类)存储在map中，每个数据标有时间戳和设备id，并定时清楚旧数据。
+由上表可知，第一步注册对应的LidarObjectData主要的工作是创建一个LiDar数据的容器类，用以数据的存储，删除与查询。数据以一定格式(ShareData子类)存储在map中，每个数据标有时间戳和设备id，并定时清理旧数据。
 
 (2) 对应共享数据容器类实例化并保存，实例化LidarObjectData
 
@@ -264,13 +264,18 @@ OBJECT_SHARED_DATA(LidarObjectData);
     std::string name() const override {                      \
       return #data_name;                                     \
     }                                                        \
-    ...														 \
+    ...                                                      \
   }
 
 REGISTER_SHAREDDATA(LidarObjectData);
 ...
 
 /// file in apollo/modules/perception/onboard/shared_data.h
+
+typedef std::map<std::string, ObjectFactory *> FactoryMap;
+typedef std::map<std::string, FactoryMap> BaseClassMap;
+BaseClassMap &GlobalFactoryMap();
+
 #define REGISTER_SHAREDDATA(name) REGISTER_CLASS(SharedData, name)
 
 /// file in apollo/modules/perception/lib/base/registerer.h
@@ -288,7 +293,7 @@ REGISTER_SHAREDDATA(LidarObjectData);
   }
 ```
 
-由代码可知
+总结可知REGISTER_SHAREDDATA宏实际是实例化共享数据容器类，并添加至全局共产管理类，方便管理所有共享数据实例，当在perception.cc的RegistAllOnboardClass中调用RegisterFactoryLidarObjectData()时，实际是实例化对应的容器类LidarObjectData，最终存储进GlobalFactoryMap中，存储的形式为：GlobalFactory[SharedData][LidarObjectData]两级存储。
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
