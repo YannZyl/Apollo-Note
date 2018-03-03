@@ -19,7 +19,7 @@
 	- [2.2 障碍物感知: 3D Obstacles Perception](#障碍物感知)
 	- [2.3 信号灯感知: Traffic Light Perception](#信号灯感知)
 
-## <a name="总体软件结构">1. Apollo 2.0总体软件结构<简介/a>
+## <a name="总体软件结构">1. Apollo 2.0总体软件结构简介</a>
 本章主要介绍Apollo 2.0的软件结构，粗略的解释总体组成模块以及每个模块的功能，代码请参考([Apollo 2.0 Github](https://github.com/ApolloAuto/apollo)), 软件框架请参考([Apollo 2.0软件架构](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/Apollo_2.0_Software_Architecture.md))。
 
 ### <a name="软件结构图">1.1 软件结构图</a>
