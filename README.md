@@ -368,10 +368,20 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，
 | AddDataAndPublishEvent(const std::shared_ptr<ImageLights> &data,const CameraId &camera_id, double timestamp) | bool | 将数据存储进共享数据实例的map中，并交由EventManager发布消息信息，在SubCameraImage函数中被调用 |
 | SubLongFocusCamera(const sensor_msgs::Image &msg) | void | 选择长焦摄像头回调函数，在InitInternal函数中被调用注册回调函数 |
 | SubShortFocusCamera(const sensor_msgs::Image &msg) | void | 选择短焦摄像头回调函数，在InitInternal函数中被调用注册回调函数 |
-| SubCameraImage(boost::shared_ptr<const sensor_msgs::Image> msg, CameraId camera_id) | void | 主体函数，获取图像，相机选择，图像筛选，验证灯光，发布信息等 |
+| SubCameraImage(boost::shared_ptr<const sensor_msgs::Image> msg, CameraId camera_id) | void | 主体函数，获取图像，相机选择，图像处理等 |
 | CameraSelection(double ts) | void | 相机选择，在SubCameraImage函数中被调用 |
 | VerifyLightsProjection(std::shared_ptr<ImageLights> image_lights) | bool | 验证信号灯映射，在SubCameraImage函数中被调用 |
-| GetSignals(double ts, CarPose \*pose, std::vector<apollo::hdmap::Signal> \*signals) | 
+| GetSignals(double ts, CarPose \*pose, std::vector<apollo::hdmap::Signal> \*signals) | 获取汽车姿态与图像信息，，在SubCameraImage函数中被调用 |
+| GetCarPose(const double ts, CarPose \*pose) | bool | 获取汽车姿态信息，在GetSignals函数被调用 |
+| TLPreprocessor preprocessor_ | -- | 预处理器 |
+| TLPreprocessingData \*preprocessing_data_ | -- | 预处理共享数据容器类指针 |
+| HDMapInput \*hd_map_ | -- | 高清地图类指针 |
+| last_signals_ts_  | -- | 上一次调用GetSignals的时间戳，若相隔太短，直接用上次的信息 |
+| std::vector<apollo::hdmap::Signal> last_signals_ | -- | 上一次的信息 |
+| last_query_tf_ts_ | -- | 上一次调用CameraSelection时间戳，若相隔太短，则直接调用该步骤，同时跳过GetSignals和CacheLightsProjections |
+| last_proc_image_ts_ | -- | 上一次图像处理时间戳，若相隔太短，掉过后续图像选择步骤 |
+
+从TLPreprocessorSubnode成员函数可以看到，子节点类主要为ROS消息订阅机制完善回调函数，在回调函数中执行相应的功能，5类子节点都具有相同的类形式，但功能不同。具体的功能在下小节描述。
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
