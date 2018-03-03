@@ -51,22 +51,20 @@
 - 3D障碍物跟踪的方向，速度以及树，人，车辆等分类信息
 - 交通信号灯的标定框以及信号灯状态信息
 
-[返回目录](#目录头)
-
-### <a name="预测模块">1.3预测模块<: Prediction</a>
+### <a name="预测模块">1.3预测模块: Prediction</a>
 
 预测模块主要功能为从感知模块获取障碍物信息，包括位置，方向，速度，加速度等。最终预测障碍物未来时刻的运动轨迹。当感知模块发布障碍物信息时，自动触发预测模块。
 
-#### <a name="预测模块输入">预测模块输入数据<</a>
+#### <a name="预测模块输入">预测模块输入数据</a>
 
 - Obstacles from perception module/感知模块障碍物信息
 - Localization from localization module/定位模块信息
 
-#### <a name="预测模块输出">预测模块输出数据<</a>
+#### <a name="预测模块输出">预测模块输出数据</a>
 
 - Obstacles additionally with predicted trajectories/障碍物预测轨迹
 
-#### <a name="预测模块函数">预测模块函数与功能<</a>
+#### <a name="预测模块函数">预测模块函数与功能</a>
 
 - Contrainer/容器
 Container存储来自ROS订阅的输入数据，目前版本支持存储感知障碍物(perception onstacles)，车辆定位(vehicle localization)，车辆轨迹规划(vehicle planning)
@@ -85,27 +83,30 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 路由模块根据请求(起始地与目的地信息)生成高层的导航信息，通过一系列的车道线与车道信息，指示车辆如何抵达目的地
 
-#### <a name="路由模块输入">路由模块输入数据<</a>
+#### <a name="路由模块输入">路由模块输入数据</a>
 
 - Map data/地图数据
 - Routing request/路由请求，包含起始地与目的地位置信息。
 
-#### <a name="路由模块输出">路由模块输出数据<</a>
+#### <a name="路由模块输出">路由模块输出数据</a>
 
 - 路由导航信息
 
 ### <a name="规划模块">1.5 规划模块: Planning</a>
 
 规划模块为自动驾驶车辆规划时空轨迹。在Apollo 2.0中，规划模块使用多个信息源来规划安全，无碰撞的运动轨迹，所以规划模块几乎可以与其他任何模块交互(localization, vehicle status (position, velocity, acceleration, chassis), map, routing, perception and prediction)。
+
 (1). 初始化时，规划模块使用预测模块输出信息。预测模块输出包含了原始障碍物信息及其运动轨迹信息。为什么规划模块不使用感知模块Perception/3D_obstacles输出信息？因为规划模块订阅的topic为交通信号灯Perception/traffic_light topic，而没有订阅Perception/3D_obstacles topic，所以不能直接使用。
+
 (2). 紧接着，规划模块使用路由模块输出信息。在某些特定情况下，如果不能按照路由模块导航路线行驶，规划模块可以发送请求并触发路由模块进行新的计算，生成新的导航信息。E.g. 路上发生交通事故，需要重新导航新的路径。
+
 (3). 最终，规划模块需要了解定位信息，以及当前车辆状态信息。规划模块有特定的函数进行一定频率的触发。
 
 支持两类主要的规划器Planner：
 - RTK replay planner(since Apollo 1.0)
 - EM planner (since Apollo 1.5)
 
-#### <a name="规划模块输入">规划模块输入数据<</a>
+#### <a name="规划模块输入">规划模块输入数据</a>
 
 - RTK replay planner
 	- Localization/定位信息
@@ -117,7 +118,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 	- HD Map/高清地图信息
 	- Routing/路由导航信息
 
-#### <a name="规划模块输出">规划模块输出数据<</a>
+#### <a name="规划模块输出">规划模块输出数据</a>
 
 - 安全合理的运动轨迹信息，供控制模块执行
 
@@ -125,14 +126,14 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 控制模块通过生成诸如节流阀，制动器，转向的控制指令给CanBus模块，执行来自规划模块的时空轨迹命令。
 
-#### <a name="控制模块输入">控制模块输入数据<</a>
+#### <a name="控制模块输入">控制模块输入数据</a>
 
 - Planning trajectory/规划路径
 - Car status/车辆状态
 - Localization/定位信息
 - Dreamview AUTO mode change request/模式切换请求
 
-#### <a name="控制模块输出">控制模块输出数据<</a>
+#### <a name="控制模块输出">控制模块输出数据</a>
 
 - control command (steering, throttle, brake) to canbus/具体的控制指令
 
@@ -140,11 +141,11 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 类似于下位机，控制区域网络模块讲来自于控制模块的具体控制指令传递给汽车硬件，同时向上层软件反馈车辆硬件信息。
 
-#### <a name="控制区域网络模块输入">控制区域网络模块输入数据<</a>
+#### <a name="控制区域网络模块输入">控制区域网络模块输入数据</a>
 
 - Control command/控制指令
 
-#### <a name="控制区域网络模块输出">控制区域网络模块输出数据<</a>
+#### <a name="控制区域网络模块输出">控制区域网络模块输出数据</a>
 
 - Chassis status/机箱状态
 - Chassis detail status/机箱具体状态
@@ -160,7 +161,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 - 基于RTK(Real-Time Kinematic, 实时动态载波相位差分技术)定位。由OnTimer函数以一定评率触发定位。
 - 多传感器融合(Multiple Sensor Fusion, MSF)定位。由一系列传感器触发函数触发。
 
-#### <a name="定位模块输入">定位模块输入数据<</a>
+#### <a name="定位模块输入">定位模块输入数据</a>
 
 - RTK-base method.
 	- GPS - Global Position System/全球定位系统
@@ -169,3 +170,5 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 	- GPS - Global Position System/全球定位系统
 	- IMU - Interial Measurement Unit/惯性测量单元
 	- LiDAR - Light Detection And Ranging Sensor/光检测和测距传感器，激光雷达
+
+[返回目录](#目录头)
