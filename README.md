@@ -184,11 +184,18 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_software_arch.png)
 
-感知模块框架本质是一个DAG有向图，该图由3类基本元素组成，包括：**子节点Sub Node**，**边Edge**和**共享数据Share Data**。框架中的每一个功能都以子节点SubNode的形式存在，以线程形式运行；子节点之间的共享数据ShareData沿着边Edge有向流行，从产生子节点流向需求子节点。上图中第二行分别初始化共享数据，子节点以及DAG，最终DAG运行完成感知功能。
+感知模块框架本质是一个DAG有向图，该图由3类基本元素组成，包括：子节点Sub Node，边Edge和共享数据Share Data。框架中的每一个功能都以子节点SubNode的形式存在，以线程形式运行；子节点之间的共享数据ShareData沿着边Edge有向流动，从产生子节点流向需求子节点。上图中第二行分别初始化共享数据，子节点以及DAG，最终DAG运行执行感知功能。
 
 #### <a name="共享数据初始化">共享数据初始化</a>
 
 ```
+file in apollo/modules/perception/perception.cc
+Status Perception::Init() {
+  AdapterManager::Init(FLAGS_perception_adapter_config_filename);
+
+  RegistAllOnboardClass();
+  ...
+}
 void Perception::RegistAllOnboardClass() {
   /// regist sharedata
   RegisterFactoryLidarObjectData();
@@ -198,7 +205,36 @@ void Perception::RegistAllOnboardClass() {
 }
 ```
 共享数据包含3类，分别为：
-- LiDARObjectData/雷达数据 
+- LiDARObjectData/激光测距仪数据，用于障碍物感知/3D Obstacle Perception
+- RadarObjectData/雷达数据，用于障碍物感知/3D Obstacle Perception
+- TLPreprocessingData/交通灯预处理数据，用于信号灯感知/Traffic Light Perception
+
+以LiDARObjectData注册初始化为例，共享数据初始化分两步：
+
+(1) 对应共享数据类注册，注册LidarObjectData
+```
+file in apollo/modules/perception/obstacle/onboard/object_share_data.h
+#define OBJECT_SHARED_DATA(data_name)                        \
+  class data_name : public CommonSharedData<SensorObjects> { \
+   public:                                                   \
+    data_name() : CommonSharedData<SensorObjects>() {}       \
+    virtual ~data_name() {}                                  \
+    std::string name() const override {                      \
+      return #data_name;                                     \
+    }                                                        \
+    ...														 \
+  }
+
+OBJECT_SHARED_DATA(LidarObjectData);
+...
+```
+该过程通过宏注册对应的共享数据类，继承CommonSharedData基础类，其中CommonSharedData类包含的元素如下
+| 名称 | 返回类型 | 属性 | 备注 |
+| ---- | -------- | ---- | ---- |
+| Init | bool | 成员函数 | 初始化标记 |
+| name | bool | 成员函数 | 共享数据名称 |
+| Reset | void | 成员函数 | 清空所有共享数据，当重置DAGStreaming时，ShareDataManager调用 |
+| RemoveStaleData | void | 成员函数 | 清空共享数据map中过时数据，当前时刻-数据时间戳大于人工设定的共享数据过期时间，则清空 |
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
