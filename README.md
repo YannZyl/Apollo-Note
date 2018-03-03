@@ -244,15 +244,15 @@ OBJECT_SHARED_DATA(LidarObjectData);
 | Pop(const CommonSharedDataKey &key, SharedDataPtr<M> *data) | bool | 由key获取共享数据，存储进data，并从map中删除，key为CommonSharedDataKey类型(包含时间戳与设备id) |
 | Remove(const std::string &key) | bool | 根据key删除共享数据，key为字符串类型 |
 | Remove(const CommonSharedDataKey &key) | bool | 根据key删除共享数据，key为CommonSharedDataKey类型(包含时间戳与设备id) |
-| Size() | unsingned | 共享数据类map中存储的数据量 |
+| Size() | unsigned | 共享数据类map中存储的数据量 |
 | GetStat() | CommonSharedDataStat | 返回类操作记录，增加数据次数，删除数据次数，获取数据次数 |
 | std::map<std::string, SharedDataPtr<M>> SharedDataMap/data_map_ | -- | 共享数据存储容器map |
 | std::map<std::string, uint64_t> DataAddedTimeMap/data_added_time_map_ | -- | map中数据加入的时间戳，配合用于删除过时数据 |
 | CommonSharedDataStat stat_ | -- | 类操作记录: 增加数据次数，删除数据次数，获取数据次数 |
 
-由上表可知，第一步注册对应的LidarObjectData主要的工作是创建一个LiDar数据的容器类，用以数据的存储，删除与查询。数据以一定格式(ShareData子类)存储在map中，每个数据标有时间戳和设备id，并定时清理旧数据。
+由上表可知，第一步注册对应的LidarObjectData主要的工作是创建一个Lidar数据的容器类，用以数据的存储，删除与查询。数据以一定格式(ShareData子类)存储在map中，每个数据标有时间戳和设备id，并定时清理旧数据。
 
-(2) 对应共享数据容器类实例化并保存，实例化LidarObjectData
+(2) 创建共享数据容器类实例与保存类函数，方便实例化LidarObjectData与保存
 
 ```
 /// file in apollo/modules/perception/obstacle/onboard/object_share_data.h
@@ -274,7 +274,6 @@ REGISTER_SHAREDDATA(LidarObjectData);
 #define REGISTER_SHAREDDATA(name) REGISTER_CLASS(SharedData, name)
 
 /// file in apollo/modules/perception/lib/base/registerer.h
-
 typedef std::map<std::string, ObjectFactory *> FactoryMap;
 typedef std::map<std::string, FactoryMap> BaseClassMap;
 BaseClassMap &GlobalFactoryMap();
@@ -293,7 +292,7 @@ BaseClassMap &GlobalFactoryMap();
   }
 ```
 
-总结可知REGISTER_SHAREDDATA宏实际是实例化共享数据容器类，并添加至全局共产管理类，方便管理所有共享数据实例，当在perception.cc的RegistAllOnboardClass中调用RegisterFactoryLidarObjectData()时，实际是实例化对应的容器类LidarObjectData，最终存储进GlobalFactoryMap中，存储的形式为：GlobalFactory[SharedData][LidarObjectData]两级存储。
+总结可知REGISTER_SHAREDDATA宏实际是创建共享数据容器类实例化与保存函数，通过调用该宏生成的函数可以方便的实例化对应的容易类并添加至全局工厂管理类，方便管理所有共享数据实例。E.g. 当在perception.cc的RegistAllOnboardClass中调用RegisterFactoryLidarObjectData()时，实际是实例化对应的容器类LidarObjectData，最终存储进GlobalFactoryMap中，存储的形式为：GlobalFactory[SharedData][LidarObjectData]两级存储。
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
