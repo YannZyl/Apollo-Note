@@ -466,7 +466,7 @@ bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
   for (auto pair : subnode_config_map) {
     const DAGConfig::Subnode& subnode_config = pair.second;
     const SubnodeID subnode_id = pair.first;
-    Subnode* inst = SubnodeRegisterer::GetInstanceByName(subnode_config.name());
+    Subnode\* inst = SubnodeRegisterer::GetInstanceByName(subnode_config.name());
     ...
     bool result = inst->Init(
         subnode_config, &event_manager_, &shared_data_manager_,
@@ -481,11 +481,11 @@ bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
 #define REGISTER_REGISTERER(base_class)                               \
   class base_class##Registerer {                                      \
    public:                                                            \
-    static base_class *GetInstanceByName(const ::std::string &name) { \
+    static base_class \*GetInstanceByName(const ::std::string &name) { \
       FactoryMap &map = perception::GlobalFactoryMap()[#base_class];  \
       FactoryMap::iterator iter = map.find(name);                     \
       Any object = iter->second->NewInstance();                       \
-      return *(object.AnyCast<base_class *>());                       \
+      return \*(object.AnyCast<base_class \*>());                       \
     }                                                                 \
 };
 ```
@@ -508,11 +508,7 @@ bool EventManager::Init(const DAGConfig::EdgeConfig &edge_config) {
   ...
   for (const DAGConfig::Edge &edge : edge_config.edges()) {
     for (const DAGConfig::Event event_pb : edge.events()) {
-      if (event_queue_map_.find(event_pb.id()) != event_queue_map_.end()) {
-        AERROR << "duplicate event id in config. id: " << event_pb.id();
-        return false;
-      }
-
+      ...
       event_queue_map_[event_pb.id()].reset(
           new EventQueue(FLAGS_max_event_queue_size));
 
@@ -522,7 +518,6 @@ bool EventManager::Init(const DAGConfig::EdgeConfig &edge_config) {
       event_meta.from_node = edge.from_node();
       event_meta.to_node = edge.to_node();
       event_meta_map_.emplace(event_pb.id(), event_meta);
-      AINFO << "load EventMeta: " << event_meta.to_string();
     }
   }
   ...
@@ -542,9 +537,33 @@ private:
 ```
 由代码分析可知，EvenManager类包含两个主要的成员变量，分别保存<事件id，消息队列>的event_queue_map_，以及保存<事件id，事件信息>的event_meta_map_。一个事件的成分包含id和name。一个完成的Edge总体保存了事件信息(id，name)，入度节点(from_node)，出度节点(to_node)
 
-(3) 最后的共享数据初始化依赖
+```
 
+(3) 最后的共享数据ShareData初始化依赖，共享数据的初始化与子节点初始化相似，主要是做数据的记录以及ShareData的实例化
 
+```
+/// file in apollo/modules/perception/onboard/dag_streaming.cc
+bool DAGStreaming::Init(const string& dag_config_path) {
+ ...
+  if (!InitSharedData(dag_config.data_config()) || !InitSubnodes(dag_config)) {
+    return false;
+  }
+  ...
+}
+bool DAGStreaming::InitSharedData(
+    const DAGConfig::SharedDataConfig& data_config) {
+  return shared_data_manager_.Init(data_config);
+}
+
+/// file in apollo/modules/perception/onboard/shared_data_manager.cc
+bool SharedDataManager::Init(const DAGConfig::SharedDataConfig &data_config) {
+  for (auto &proto : data_config.datas()) {
+    SharedData \*shared_data = SharedDataRegisterer::GetInstanceByName(proto.name());
+    auto result = shared_data_map_.emplace(
+        shared_data->name(), std::unique_ptr<SharedData>(shared_data));
+  }
+  return true;
+}
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
 ### <a name="信号灯感知">2.3 信号灯感知: Traffic Light Perception</a>
@@ -553,7 +572,7 @@ Status Perception::Init() {
 
   RegistAllOnboardClass();
   /// init config manager
-  ConfigManager* config_manager = ConfigManager::instance();
+  ConfigManager\* config_manager = ConfigManager::instance();
   if (!config_manager->Init()) {
     AERROR << "failed to Init ConfigManager";
     return Status(ErrorCode::PERCEPTION_ERROR, "failed to Init ConfigManager.");
