@@ -327,7 +327,7 @@ Apollo中所有的topic有：
 
 #### <a name="共享数据类初始化">2.1.2 ShareData共享数据类初始化</a>
 
-共享数据类初始化主要是创建各个共享数据结构的模板类，在后续DAG初始化工程中调用这些类可以真正实例化共享数据类。
+对比上述的ROS消息订阅与发布机制，另一类消息传递机制是依赖手工管理收发消息(下文将提到)。共享数据是针对这类机制设定的，某些节点需要的输入数据保存到共享信息中，节点需要自己调用函数去提取共享数据完成处理。共享数据类初始化主要是创建各个共享数据结构的模板类，在后续DAG初始化工程中调用这些类可以真正实例化共享数据类。
 
 ```
 /// file in apollo/modules/perception/perception.cc
@@ -502,7 +502,7 @@ BaseClassMap &GlobalFactoryMap();
 
 与前小节类似，REGISTER_SUBNODE宏作用是生成对应的Subnode类，同时创建该Subnode类的实例化与保存函数，通过调用RegisterFactoryTLPreprocessorSubnode可以方便的实例化该子节点类，并保存到全局工厂管理类中，存储的形式为：GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储。
 
-TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，该类主要包含的元素如下
+TLPreprocessorSubnode继承了Subnode类，可以进一步分析TLPreprocessorSubnod类成分，该类主要包含的元素如下
 
 | 名称 | 返回 | 备注 |
 | ---- | ---- | ---- |
