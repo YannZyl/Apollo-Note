@@ -200,8 +200,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 ```
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
-  AdapterManager::Init(FLAGS_perception_adapter_config_filename);
-
+  ...
   RegistAllOnboardClass();
   ...
 }
@@ -312,8 +311,7 @@ BaseClassMap &GlobalFactoryMap();
 ```
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
-  AdapterManager::Init(FLAGS_perception_adapter_config_filename);
-
+  ...
   RegistAllOnboardClass();
   ...
 }
