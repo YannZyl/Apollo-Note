@@ -22,7 +22,12 @@
 		- [2.1.4 DAG有向图初始化](#有向图初始化)
 		- [2.1.5 DAG整体运行实现感知](#DAG运行)
 	- [2.2 障碍物感知: 3D Obstacles Perception](#障碍物感知)
+		- [2.2.1 激光测距仪障碍物感知 LiDAR Obstacle Perception](#激光测距仪感知)
+		- [2.2.2 雷达障碍物感知 RADAR Obstacle Perception](#雷达感知)
+		- [2.2.3 障碍物结果融合](#障碍物结果融合)
 	- [2.3 信号灯感知: Traffic Light Perception](#信号灯感知)
+		- [2.3.1 信号灯预处理: Traffic Light Preprocess](#信号灯预处理)
+		- [2.3.2 信号灯处理: Traffic Light Process](#信号灯处理)
 
 ## <a name="总体软件结构">1. Apollo 2.0总体软件结构简介</a>
 本章主要介绍Apollo 2.0的软件结构，粗略的解释总体组成模块以及每个模块的功能，代码请参考([Apollo 2.0 Github](https://github.com/ApolloAuto/apollo)), 软件框架请参考([Apollo 2.0软件架构](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/Apollo_2.0_Software_Architecture.md))。
@@ -461,7 +466,7 @@ void Perception::RegistAllOnboardClass() {
 子节点SubNode是程序中的某个功能块，每个子节点都是一个线程，在感知模块中，一共存在5个子节点：
 - LidarProcessSubnode/激光测距处理子节点，用于障碍物感知/3D Obstacle Perception
 - RadarProcessSubnode/雷达处理子节点，用于障碍物感知/3D Obstacle Perception
-- FusionSubnode/融合模式处理子节点，用于障碍物感知/3D Obstacle Perception
+- FusionSubnode/障碍物结果融合，将上述两类感知结果融合，用于障碍物感知/3D Obstacle Perception
 - TLPreprocessSubnode/信号灯预处理子节点，用于信号灯感知/Traffic Light Perception
 - TLProcessSubnode/信号灯处理子节点，用于信号灯感知/Traffic Light Perception
 
