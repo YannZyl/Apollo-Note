@@ -355,7 +355,7 @@ BaseClassMap &GlobalFactoryMap();
   }
 ```
 
-与前小节类似，REGISTER_SUBNODE宏作用是生成对应的Subnode类，同时创建该Subnode类的实例化与保存函数，通过调用RegisterFactoryTLPreprocessSubnode可以方便的实例化该子节点类，并保存到全局工厂管理类中，存储的形式为：GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储。
+与前小节类似，REGISTER_SUBNODE宏作用是生成对应的Subnode类，同时创建该Subnode类的实例化与保存函数，通过调用RegisterFactoryTLPreprocessorSubnode可以方便的实例化该子节点类，并保存到全局工厂管理类中，存储的形式为：GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储。
 
 TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，该类主要包含的元素如下
 
@@ -381,10 +381,86 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，
 | last_query_tf_ts_ | -- | 上一次调用CameraSelection时间戳，若相隔太短，则直接调用该步骤，同时跳过GetSignals和CacheLightsProjections |
 | last_proc_image_ts_ | -- | 上一次图像处理时间戳，若相隔太短，掉过后续图像选择步骤 |
 
-从TLPreprocessorSubnode成员函数可以看到，子节点类主要为ROS消息订阅机制完善回调函数，在回调函数中执行相应的功能，5类子节点都具有相同的类形式，但功能不同。具体的功能在下小节描述。
+从TLPreprocessorSubnode成员函数可以看到，子节点类主要为ROS消息发布与订阅机制(或者是定时触发机制)完善回调函数，在回调函数中执行相应的功能，5类子节点都具有相同的类形式，但功能不同。具体的功能在下小节描述。
+
+#### <a name="有向图初始化">有向图DAG初始化</a>
+
+DAG初始化过程主要是构建子节点SubNode，边Edge和共享数据ShareData的一个有向图，关于有向图的三部分内容，程序从config文件读入
+```
+/// file in apollo/modules/perception/perception.cc
+Status Perception::Init() {
+  ...
+  // work_root: modules/perception
+  // dag_config_path: ./conf/dag_streaming.config
+  const std::string dag_config_path = apollo::common::util::GetAbsolutePath(
+      FLAGS_work_root, FLAGS_dag_config_path);
+  ...
+}
+
+/// file in apollo/modules/perception/conf/dag_streaming.config
+# Define all nodes in DAG streaming.
+subnode_config {
+    # 64-Lidar Input nodes.
+    subnodes {
+        id: 1
+        name: "LidarProcessSubnode"
+        reserve: "device_id:velodyne64;"
+        type: SUBNODE_IN
+    }
+    ...
+}
+
+# Define all edges linked nodes.
+edge_config {
+    # 64-Lidar LidarProcessSubnode -> FusionSubnode
+    edges {
+        id: 101
+        from_node: 1
+        to_node: 31
+        events {
+            id: 1001
+            name: "lidar_fusion"
+        }
+    }
+    ...
+}
+
+data_config {
+    datas {
+        id: 1
+        name: "LidarObjectData"
+    }
+ 	...
+}
+```
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
 ### <a name="信号灯感知">2.3 信号灯感知: Traffic Light Perception</a>
+Status Perception::Init() {
+  AdapterManager::Init(FLAGS_perception_adapter_config_filename);
+
+  RegistAllOnboardClass();
+  /// init config manager
+  ConfigManager* config_manager = ConfigManager::instance();
+  if (!config_manager->Init()) {
+    AERROR << "failed to Init ConfigManager";
+    return Status(ErrorCode::PERCEPTION_ERROR, "failed to Init ConfigManager.");
+  }
+  AINFO << "Init config manager successfully, work_root: "
+        << config_manager->work_root();
+
+  const std::string dag_config_path = apollo::common::util::GetAbsolutePath(
+      FLAGS_work_root, FLAGS_dag_config_path);
+
+  if (!dag_streaming_.Init(dag_config_path)) {
+    AERROR << "failed to Init DAGStreaming. dag_config_path:"
+           << dag_config_path;
+    return Status(ErrorCode::PERCEPTION_ERROR, "failed to Init DAGStreaming.");
+  }
+  callback_thread_num_ = 5;
+
+  return Status::OK();
+}
 
 [返回目录](#目录头)
