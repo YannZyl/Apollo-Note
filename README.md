@@ -16,6 +16,11 @@
 	- [1.9 定位模块: Localization](#定位模块)
 - [2. 感知模块笔记](#感知模块详解)
 	- [2.1 代码层次结构图](#代码层次结构)
+		- [2.1.1 Topic注册管理器初始化](#注册管理器初始化)
+		- [2.1.2 ShareData共享数据类初始化](#共享数据类初始化)
+		- [2.1.3 SubNode子节点类初始化](#子节点类初始化)
+		- [2.1.4 DAG有向图初始化](#有向图初始化)
+		- [2.1.5 DAG整体运行实现感知](#DAG运行)
 	- [2.2 障碍物感知: 3D Obstacles Perception](#障碍物感知)
 	- [2.3 信号灯感知: Traffic Light Perception](#信号灯感知)
 
@@ -186,7 +191,9 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 感知模块框架本质是一个DAG有向图，该图由3类基本元素组成，包括：子节点Sub Node，边Edge和共享数据Share Data。框架中的每一个功能都以子节点SubNode的形式存在，以线程形式运行；子节点之间的共享数据ShareData沿着边Edge有向流动，从产生子节点流向需求子节点。上图中第二行分别初始化共享数据，子节点以及DAG，最终DAG运行执行感知功能。
 
-#### <a name="共享数据初始化">共享数据初始化</a>
+#### <a name="注册管理器初始化">2.1.1 Topic注册管理器初始化</a>
+
+#### <a name="共享数据类初始化>2.1.2 ShareData共享数据类初始化</a>
 
 ```
 /// file in apollo/modules/perception/perception.cc
@@ -293,7 +300,7 @@ BaseClassMap &GlobalFactoryMap();
 
 总结可知REGISTER_SHAREDDATA宏实际是创建共享数据容器类实例化与保存函数，通过调用该宏生成的函数可以方便的实例化对应的容易类并添加至全局工厂管理类，方便管理所有共享数据实例。E.g. 当在perception.cc的RegistAllOnboardClass中调用RegisterFactoryLidarObjectData()时，实际是实例化对应的容器类LidarObjectData，最终存储进GlobalFactoryMap中，存储的形式为：GlobalFactory[SharedData][LidarObjectData]两级存储。
 
-#### <a name="子节点初始化">子节点SubNode初始化</a>
+#### <a name="子节点类初始化">2.1.3 SubNode子节点类初始化/a>
 ```
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
@@ -383,7 +390,7 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，
 
 从TLPreprocessorSubnode成员函数可以看到，子节点类主要为ROS消息发布与订阅机制(或者是定时触发机制)完善回调函数，在回调函数中执行相应的功能，5类子节点都具有相同的类形式，但功能不同。具体的功能在下小节描述。
 
-#### <a name="有向图初始化">有向图DAG初始化</a>
+#### <a name="有向图初始化">2.1.4 DAG有向图初始化/a>
 
 DAG初始化过程主要是构建子节点SubNode，边Edge和共享数据ShareData的一个有向图，关于有向图的三部分内容，程序从config文件读入
 ```
@@ -563,6 +570,8 @@ bool SharedDataManager::Init(const DAGConfig::SharedDataConfig &data_config) {
   return true;
 }
 ```
+
+#### <a name="DAG运行">2.1.5 DAG整体运行实行感知</a>
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
