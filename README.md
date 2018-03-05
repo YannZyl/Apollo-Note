@@ -195,6 +195,8 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 #### <a name="共享数据类初始化">2.1.2 ShareData共享数据类初始化</a>
 
+共享数据类初始化主要是创建各个共享数据结构的模板类，在后续DAG初始化工程中调用这些类可以真正实例化共享数据类。
+
 ```
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
@@ -211,6 +213,7 @@ void Perception::RegistAllOnboardClass() {
   ...
 }
 ```
+
 共享数据包含3类，分别为：
 - LiDARObjectData/激光测距仪数据，用于障碍物感知/3D Obstacle Perception
 - RadarObjectData/雷达数据，用于障碍物感知/3D Obstacle Perception
@@ -219,6 +222,7 @@ void Perception::RegistAllOnboardClass() {
 以LiDARObjectData注册初始化为例，共享数据初始化分两步：
 
 (1) 对应共享数据容器类注册，注册LidarObjectData
+
 ```
 /// file in apollo/modules/perception/obstacle/onboard/object_share_data.h
 #define OBJECT_SHARED_DATA(data_name)                        \
@@ -235,6 +239,7 @@ void Perception::RegistAllOnboardClass() {
 OBJECT_SHARED_DATA(LidarObjectData);
 ...
 ```
+
 该过程通过宏注册对应的共享数据类，继承CommonSharedData基础类，其中CommonSharedData类包含的元素如下
 
 | 名称 | 返回 | 备注 |
@@ -301,6 +306,9 @@ BaseClassMap &GlobalFactoryMap();
 总结可知REGISTER_SHAREDDATA宏实际是创建共享数据容器类实例化与保存函数，通过调用该宏生成的函数可以方便的实例化对应的容易类并添加至全局工厂管理类，方便管理所有共享数据实例。E.g. 当在perception.cc的RegistAllOnboardClass中调用RegisterFactoryLidarObjectData()时，实际是实例化对应的容器类LidarObjectData，最终存储进GlobalFactoryMap中，存储的形式为：GlobalFactory[SharedData][LidarObjectData]两级存储。
 
 #### <a name="子节点类初始化">2.1.3 SubNode子节点类初始化</a>
+
+子节点SubNode类初始化与共享数据类初始化相同，主要是创建各个子节点的模板类，在后续DAG初始化工程中调用这些类可以真正实例化子节点类。
+
 ```
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
@@ -392,7 +400,8 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，
 
 #### <a name="有向图初始化">2.1.4 DAG有向图初始化</a>
 
-DAG初始化过程主要是构建子节点SubNode，边Edge和共享数据ShareData的一个有向图，关于有向图的三部分内容，程序从config文件读入
+DAG初始化过程主要是构建子节点SubNode，边Edge和共享数据ShareData的一个有向图，并全部实例化得到对应的类对象，关于有向图的三部分内容，程序从config文件读入
+
 ```
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
@@ -441,7 +450,7 @@ data_config {
 }
 ```
 
-(1) 在DAG三部分初始化过程中，子节点SubNode已经在上小节中完成初始化，5个子节点分别开启5个线程，每个线程设置对应的回调函数，当有输入的时候(收到ROS订阅的消息topic或者定时触发)，自动触发子节点功能。在代码中子节点的初始化工作包含SubNode配置记录(节点id，入度id，出度id)，子节点实例化。上小节"子节点SubNode初始化"讲述了子节点SubNode初始化仅仅创建实例化的函数，调用该函数可以实例化子节点，并保存在GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储中。本节是真正的实例化对象。
+(1) 在DAG三部分初始化过程中，上小节"子节点SubNode类初始化"仅仅创建该类实例化的函数，5个子节点分别对应5个线程，每个线程设置对应的回调函数，当有输入的时候(收到ROS订阅的消息topic或者定时触发，自动触发子节点功能，但未真正的实例化该类。在DAG有向图初始化中子节点的初始化工作包含SubNode配置记录(节点id，入度id，出度id)，子节点实例化，通过调用先前创建的函数可以实例化子节点，并保存在GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储中。
 
 ```
 /// file in apollo/modules/perception/onboard/dag_streaming.cc
@@ -483,7 +492,11 @@ bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
   }
   ...
 }
+```
 
+上述过程前两个for达到记录Edge配置作用，真正意义上的实例化工作由SubnodeRegisterer::GetInstanceByName和Init完成，该过程代码如下
+
+```
 /// file in apollo/modules/perception/lib/base/registerer.h
 #define REGISTER_REGISTERER(base_class)                               \
   class base_class##Registerer {                                      \
@@ -542,7 +555,7 @@ private:
   EventMetaMap event_meta_map_;
 };
 ```
-由代码分析可知，EvenManager类包含两个主要的成员变量，分别保存<事件id，消息队列>的event_queue_map_，以及保存<事件id，事件信息>的event_meta_map_。一个事件的成分包含id和name。一个完成的Edge总体保存了事件信息(id，name)，入度节点(from_node)，出度节点(to_node)
+由代码分析可知，EvenManager类包含两个主要的成员变量，分别保存<事件id，消息队列>的event_queue_map_，以及保存<事件id，事件信息>的event_meta_map_(用于调试，打印信息)。一个事件的成分包含id和name。一个完整的Edge总体保存了事件信息(id，name)，入度节点(from_node)，出度节点(to_node)
 
 (3) 最后的共享数据ShareData初始化依赖，共享数据的初始化与子节点初始化相似，主要是做数据的记录以及ShareData的实例化
 
