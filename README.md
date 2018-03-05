@@ -700,6 +700,7 @@ class TLPreprocessorSubnode : public Subnode {
 - 另一类消息接受与发布机制依赖于EvenManager来管理消息，就是采用ProEvents()处理，当节点线程循环执行Run函数去接受列表头的第一个消息，交由ProEvents()去处理消息，同时Run函数可以逐个发布发送队列中的消息。
 
 此外，总结一下5个子节点的消息发布类型：
+
 | 子节点名称 | 消息传递机制 |
 | ---------- | ------------------- |
 | LidarProcessSubnode | ROS发布与订阅机制 |
