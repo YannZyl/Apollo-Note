@@ -193,6 +193,137 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 #### <a name="注册管理器初始化">2.1.1 Topic注册管理器初始化</a>
 
+Topic注册与管理器初始化只要是为感知模块创建所有需要订阅与发布的topic，感知模块一共有5个子节点(或者叫功能块)，其中某些子节点需要订阅与发布信息，E.g. GPS topic，ImageShort/短焦摄像头 topic等。
+
+```
+/// file in apollo/modules/perception/perception.cc
+Status Perception::Init() {
+  AdapterManager::Init(FLAGS_perception_adapter_config_filename);
+  ...
+}
+
+/// file in apollo/modules/common/adapters/adapter_manager.cc
+void AdapterManager::Init(const std::string &adapter_config_filename) {
+  // Parse config file
+  AdapterManagerConfig configs;
+  CHECK(util::GetProtoFromFile(adapter_config_filename, &configs))
+      << "Unable to parse adapter config file " << adapter_config_filename;
+  AINFO << "Init AdapterManger config:" << configs.DebugString();
+  Init(configs);
+}
+void AdapterManager::Init(const AdapterManagerConfig &configs) {
+  ...
+  for (const auto &config : configs.config()) {
+    switch (config.type()) {
+      case AdapterConfig::POINT_CLOUD:
+        EnablePointCloud(FLAGS_pointcloud_topic, config);
+        break;
+      case AdapterConfig::GPS:
+        EnableGps(FLAGS_gps_topic, config);
+        break;
+    ...
+  }
+}
+```
+
+Apollo中所有的topic有：
+
+| topic名称 | 备注说明 |
+| --------- | -------- |
+| "/apollo/sensor/gnss/odometry" | GPS topic name|
+| "/apollo/sensor/gnss/corrected_imu" | "IMU topic name" |
+| "/apollo/sensor/gnss/imu" | "Raw IMU topic name" |
+| "/apollo/canbus/chassis" | "chassis topic name" |
+| "/apollo/canbus/chassis_detail" | "chassis detail topic name" |
+| "/apollo/localization/pose" | "localization topic name" |
+| "/apollo/planning" | "planning trajectory topic name" |
+| "/apollo/monitor" | "ROS topic for monitor" |
+| "/apollo/control/pad" | "control pad message topic name" |
+| "/apollo/control" | "control command topic name" |
+| "/apollo/sensor/velodyne64/compensator/PointCloud2" | "pointcloud topic name" |
+| "/apollo/prediction" | "prediction topic name" |
+| "/apollo/perception/obstacles" | "perception obstacle topic name" |
+| "/apollo/drive_event" | "drive event topic name" |
+| "/apollo/perception/traffic_light" | "traffic light detection topic name" |
+| "/apollo/routing_request" | "routing request topic name" |
+| "/apollo/routing_response" | "routing response topic name" |
+| "/apollo/calibration/relative_odometry" | "relative odometry topic name" |
+| "/apollo/sensor/gnss/ins_stat" | "ins stat topic name") |
+| "/apollo/sensor/gnss/ins_status" | "ins status topic name" |
+| "/apollo/sensor/gnss/gnss_status" | "gnss status topic name" |
+| "/apollo/monitor/system_status" | "System status topic name" |
+| "/apollo/monitor/static_info" | "Static info topic name" |
+| "/apollo/sensor/mobileye" | "mobileye topic name" |
+| "/apollo/sensor/delphi_esr" | "delphi esr radar topic name" |
+| "/apollo/sensor/conti_radar" | "delphi esr radar topic name" |
+| "camera/image_raw" | "CompressedImage topic name" |
+| "/apollo/sensor/camera/traffic/image_short" | "short camera image topic name" |
+| "/apollo/sensor/camera/traffic/image_long" | "long camera image topic name" |
+| "/apollo/sensor/gnss/rtk_obs" | "Gnss rtk observation topic name" |
+| "/apollo/sensor/gnss/rtk_eph" | "Gnss rtk ephemeris topic name" |
+| "/apollo/sensor/gnss/best_pose" | "Gnss rtk best gnss pose" |
+| "/apollo/localization/msf_gnss" | "Gnss localization measurement topic name" |
+| "/apollo/localization/msf_lidar" | "Lidar localization measurement topic name" |
+| "/apollo/localization/msf_sins_pva" | "Localization sins pva topic name" |
+| "/apollo/localization/msf_status" | "msf localization status" |
+| "/apollo/relative_map" | "relative map" |
+| "/apollo/navigation" | "navigation" |
+
+每个topic的注册使用REGISTER_ADAPTER(name)完成，进一步具体观察REGISTER_ADAPTER宏部分关键代码:
+
+```
+#define REGISTER_ADAPTER(name)                                                 \
+ public:                                                                       \
+  static void Enable##name(const std::string &topic_name,                      \
+                           const AdapterConfig &config) {                      \
+    instance()->InternalEnable##name(topic_name, config);                      \
+  }                                                                            \
+  static void Publish##name(const name##Adapter::DataType &data) {             \
+    instance()->InternalPublish##name(data);                                   \
+  }                                                                            \
+  static void Add##name##Callback(name##Adapter::Callback callback) {          \
+    CHECK(instance()->name##_)                                                 \
+        << "Initialize adapter before setting callback";                       \
+    instance()->name##_->AddCallback(callback);                                \
+  }                                                                            \
+  template <class T>                                                           \
+  static void Add##name##Callback(                                             \
+      void (T::*fp)(const name##Adapter::DataType &data), T *obj) {            \
+    Add##name##Callback(std::bind(fp, obj, std::placeholders::_1));            \
+  }                                                                            \
+  template <class T>                                                           \
+  static void Add##name##Callback(                                             \
+      void (T::*fp)(const name##Adapter::DataType &data)) {                    \
+    Add##name##Callback(fp);                                                   \
+  }                                                                            \
+ private:                                                                      \
+  std::unique_ptr<name##Adapter> name##_;                                      \
+  ros::Publisher name##publisher_;                                             \
+  ros::Subscriber name##subscriber_;                                           \
+  AdapterConfig name##config_;                                                 \
+                                                                               \
+  void InternalEnable##name(const std::string &topic_name,                     \
+                            const AdapterConfig &config) {                     \
+    name##_.reset(                                                             \
+        new name##Adapter(#name, topic_name, config.message_history_limit())); \
+    if (config.mode() != AdapterConfig::PUBLISH_ONLY && IsRos()) {             \
+      name##subscriber_ =                                                      \
+          node_handle_->subscribe(topic_name, config.message_history_limit(),  \
+                                  &name##Adapter::RosCallback, name##_.get()); \
+    }                                                                          \
+    if (config.mode() != AdapterConfig::RECEIVE_ONLY && IsRos()) {             \
+      name##publisher_ = node_handle_->advertise<name##Adapter::DataType>(     \
+          topic_name, config.message_history_limit(), config.latch());         \
+    }                                                                          \
+                                                                               \
+    observers_.push_back([this]() { name##_->Observe(); });                    \
+    name##config_ = config;                                                    \
+  }      
+
+```
+
+从代码段不难看出，调用一次REGISTER_ADAPTER(name)就会生成该topic的订阅与发布数据成员，以及对应的发布函数，Callback添加函数，如果某个节点需要订阅该topic(即输入是该topic发布的信息)，则只需要使用Add\*Callback把节点的处理函数加入即可自动调用。
+
 #### <a name="共享数据类初始化">2.1.2 ShareData共享数据类初始化</a>
 
 共享数据类初始化主要是创建各个共享数据结构的模板类，在后续DAG初始化工程中调用这些类可以真正实例化共享数据类。
