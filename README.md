@@ -269,9 +269,10 @@ Apollo中所有的topic有：
 | "/apollo/relative_map" | "relative map" |
 | "/apollo/navigation" | "navigation" |
 
-每个topic的注册使用REGISTER_ADAPTER(name)完成，进一步具体观察REGISTER_ADAPTER宏部分关键代码:
+每个topic的注册管理器类创建使用REGISTER_ADAPTER(name)完成，具体的初始化工作则调用宏生成的Enable##name()。进一步具体观察REGISTER_ADAPTER宏部分关键代码:
 
 ```
+/// file in apollo/modules/common/adapters/adapter_manager.h
 #define REGISTER_ADAPTER(name)                                                 \
  public:                                                                       \
   static void Enable##name(const std::string &topic_name,                      \
