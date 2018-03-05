@@ -273,7 +273,7 @@ REGISTER_SHAREDDATA(LidarObjectData);
 #define REGISTER_SHAREDDATA(name) REGISTER_CLASS(SharedData, name)
 
 /// file in apollo/modules/perception/lib/base/registerer.h
-typedef std::map<std::string, ObjectFactory \*> FactoryMap;
+typedef std::map<std::string, ObjectFactory *> FactoryMap;
 typedef std::map<std::string, FactoryMap> BaseClassMap;
 BaseClassMap &GlobalFactoryMap();
 
@@ -337,7 +337,7 @@ REGISTER_SUBNODE(TLPreprocessorSubnode);
 #define REGISTER_SUBNODE(name) REGISTER_CLASS(Subnode, name)
 
 /// file in apollo/modules/perception/lib/base/registerer.h
-typedef std::map<std::string, ObjectFactory \*> FactoryMap;
+typedef std::map<std::string, ObjectFactory *> FactoryMap;
 typedef std::map<std::string, FactoryMap> BaseClassMap;
 BaseClassMap &GlobalFactoryMap();
 
@@ -466,7 +466,7 @@ bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
   for (auto pair : subnode_config_map) {
     const DAGConfig::Subnode& subnode_config = pair.second;
     const SubnodeID subnode_id = pair.first;
-    Subnode\* inst = SubnodeRegisterer::GetInstanceByName(subnode_config.name());
+    Subnode* inst = SubnodeRegisterer::GetInstanceByName(subnode_config.name());
     ...
     bool result = inst->Init(
         subnode_config, &event_manager_, &shared_data_manager_,
@@ -481,11 +481,11 @@ bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
 #define REGISTER_REGISTERER(base_class)                               \
   class base_class##Registerer {                                      \
    public:                                                            \
-    static base_class \*GetInstanceByName(const ::std::string &name) { \
+    static base_class *GetInstanceByName(const ::std::string &name) { \
       FactoryMap &map = perception::GlobalFactoryMap()[#base_class];  \
       FactoryMap::iterator iter = map.find(name);                     \
       Any object = iter->second->NewInstance();                       \
-      return \*(object.AnyCast<base_class \*>());                       \
+      return *(object.AnyCast<base_class *>());                       \
     }                                                                 \
 };
 ```
@@ -537,8 +537,6 @@ private:
 ```
 由代码分析可知，EvenManager类包含两个主要的成员变量，分别保存<事件id，消息队列>的event_queue_map_，以及保存<事件id，事件信息>的event_meta_map_。一个事件的成分包含id和name。一个完成的Edge总体保存了事件信息(id，name)，入度节点(from_node)，出度节点(to_node)
 
-```
-
 (3) 最后的共享数据ShareData初始化依赖，共享数据的初始化与子节点初始化相似，主要是做数据的记录以及ShareData的实例化
 
 ```
@@ -564,33 +562,11 @@ bool SharedDataManager::Init(const DAGConfig::SharedDataConfig &data_config) {
   }
   return true;
 }
+```
+
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
 ### <a name="信号灯感知">2.3 信号灯感知: Traffic Light Perception</a>
-Status Perception::Init() {
-  AdapterManager::Init(FLAGS_perception_adapter_config_filename);
 
-  RegistAllOnboardClass();
-  /// init config manager
-  ConfigManager\* config_manager = ConfigManager::instance();
-  if (!config_manager->Init()) {
-    AERROR << "failed to Init ConfigManager";
-    return Status(ErrorCode::PERCEPTION_ERROR, "failed to Init ConfigManager.");
-  }
-  AINFO << "Init config manager successfully, work_root: "
-        << config_manager->work_root();
-
-  const std::string dag_config_path = apollo::common::util::GetAbsolutePath(
-      FLAGS_work_root, FLAGS_dag_config_path);
-
-  if (!dag_streaming_.Init(dag_config_path)) {
-    AERROR << "failed to Init DAGStreaming. dag_config_path:"
-           << dag_config_path;
-    return Status(ErrorCode::PERCEPTION_ERROR, "failed to Init DAGStreaming.");
-  }
-  callback_thread_num_ = 5;
-
-  return Status::OK();
-}
 
 [返回目录](#目录头)
