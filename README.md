@@ -444,11 +444,11 @@ data_config {
         id: 1
         name: "LidarObjectData"
     }
- 	...
+    ...
 }
 ```
 
-(1) 在DAG三部分初始化过程中，上小节"子节点SubNode类初始化"仅仅创建该类实例化的函数，5个子节点分别对应5个线程，每个线程设置对应的回调函数，当有输入的时候(收到ROS订阅的消息topic或者定时触发，自动触发子节点功能，但未真正的实例化该类。在DAG有向图初始化中子节点的初始化工作包含SubNode配置记录(节点id，入度id，出度id)，子节点实例化，通过调用先前创建的函数可以实例化子节点，并保存在GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储中。
+(1) 在DAG三部分初始化过程中，上小节"子节点SubNode类初始化"仅仅创建该类实例化的函数，5个子节点分别对应5个线程，每个线程设置对应的回调函数，当有输入的时候(收到ROS订阅的消息topic或者定时触发)，自动触发子节点功能，但未真正的实例化该类。在DAG有向图初始化中子节点的初始化工作包含SubNode配置记录(节点id，入度id，出度id)，子节点实例化，通过调用先前创建的函数可以实例化子节点，并保存在GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储中。
 
 ```
 /// file in apollo/modules/perception/onboard/dag_streaming.cc
@@ -583,6 +583,130 @@ bool SharedDataManager::Init(const DAGConfig::SharedDataConfig &data_config) {
 ```
 
 #### <a name="DAG运行">2.1.5 DAG整体运行实行感知</a>
+
+当DAG完成子节点SubNode，边Edge以及共享数据ShareData的单例对象初始化时，下一步就是启动各个节点的多线程进行工作。运行DAG的过程如下
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/dag_run_process.png)
+
+上图展示了DAG运行的流程图，其中Run函数是线程指定的运行函数。
+
+```
+/// file in apollo/modules/perception/lib/base/thread.h && thread.cc
+class Thread {
+  void Thread::Start() {
+    pthread_attr_t attr;
+    CHECK_EQ(pthread_attr_init(&attr), 0);
+    CHECK_EQ(
+      pthread_attr_setdetachstate(
+          &attr, joinable_ ? PTHREAD_CREATE_JOINABLE : PTHREAD_CREATE_DETACHED),
+      0);
+    CHECK_EQ(pthread_setcancelstate(PTHREAD_CANCEL_ENABLE, nullptr), 0);
+    CHECK_EQ(pthread_setcanceltype(PTHREAD_CANCEL_ASYNCHRONOUS, nullptr), 0);
+
+    int result = pthread_create(&tid_, &attr, &ThreadRunner, this);
+    CHECK_EQ(result, 0) << "Could not create thread (" << result << ")";
+    CHECK_EQ(pthread_attr_destroy(&attr), 0);
+    started_ = true;
+}
+
+  static void* ThreadRunner(void* arg) {
+    Thread* t = reinterpret_cast<Thread*>(arg);
+    t->Run();
+    return nullptr;
+  }
+};
+```
+
+最末端DAGStreamingMonitor::Run()函数是DAG监视器线程，主要工作是检测拥塞情况(拥塞值大于实现设定的最大允许拥塞值时重置DAG)以及清除超时的共享数据的。
+
+```
+/// file in apollo/modules/perception/onboard/dag_streaming.cc
+void DAGStreaming::Schedule() {
+  monitor_->Start();
+  ...
+}
+
+void DAGStreamingMonitor::Run() {
+  while (!stop_) {
+    if (FLAGS_max_allowed_congestion_value > 0) {
+      // Timing to check DAGStreaming congestion value.
+      int congestion_value = dag_streaming_->CongestionValue();
+      if (congestion_value > FLAGS_max_allowed_congestion_value) {
+        dag_streaming_->Reset();
+      }
+    }
+
+    if (FLAGS_enable_timing_remove_stale_data) {
+      dag_streaming_->RemoveStaleData();
+    }
+    sleep(1);
+  }
+}
+```
+
+第二部分是开启所有子节点SubNode的线程。具体每个SubNode的线程函数可以参考Subnode类
+
+```
+/// file in apollo/modules/perception/onboard/dag_streaming.cc
+void DAGStreaming::Schedule() {
+  ...
+  // start all subnodes.
+  for (auto& pair : subnode_map_) {
+    pair.second->Start();
+  }
+  for (auto& pair : subnode_map_) {
+    pair.second->Join();
+  }
+  monitor_->Join();
+}
+
+/// file in apollo/modules/perception/onboard/subnode.cc
+void Subnode::Run() {
+  ...
+  if (type_ == DAGConfig::SUBNODE_IN) {
+    AINFO << "Subnode == SUBNODE_IN, EXIT THREAD. subnode:" << DebugString();
+    return;
+  }
+
+  while (!stop_) {
+    Status status = ProcEvents();
+    ++total_count_;
+    if (status.code() == ErrorCode::PERCEPTION_ERROR) {
+      ++failed_count_;
+      ...
+      continue;
+    }
+    ...
+  }
+}
+
+/// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.h
+class TLPreprocessorSubnode : public Subnode {
+ public:
+  /**
+   * @brief as a subnode with type SUBNODE_IN
+   *         we will use ros callback, so ignore subnode callback
+   */
+  apollo::common::Status ProcEvents() override {
+    return apollo::common::Status::OK();
+  }
+}
+```
+
+分析上述的代码可知，5个子节点的线程由DAG依次开启。而每个SubNode的Run()函数主要做的工作就是从发布队列和订阅队列中逐个处理数据，ProcEvents()函数清楚的展示了这个过程。这里有个细节，在Apollo代码中，模块/线程间消息传递有两种方式：
+
+- 一类是基于ROS消息与订阅机制。以交通信号灯预处理子节点为例，在tl_preprocessor_subnode.h中，ProcEvents()仅返回OK状态，并未处理任何消息，这是由于该节点使用的是ROS消息与订阅机制，当收到消息时自动跳转到回调函数(请参考节点的InitInternal::Add\*Callback函数)，所以其实不需要人工去捕获消息然后处理。如果节点使用ROS消息订阅机制，不需要考虑ProcEvents()，甚至可以不需要考虑EventManager(注：EventManager的Subsrcibe和Publish其实并不是真正消息的订阅与发布，订阅与发布在PrecEvents里面处理(从对应的共享数据中提取数据处理)，EventManager主要是记录消息传递的信息，E.g. 从哪个节点到哪个节点，发布的时间戳等信息，不包含真正的信息内容).
+
+- 另一类消息接受与发布机制依赖于EvenManager来管理消息，就是采用ProEvents()处理，当节点线程循环执行Run函数去接受列表头的第一个消息，交由ProEvents()去处理消息，同时Run函数可以逐个发布发送队列中的消息。
+
+此外，总结一下5个子节点的消息发布类型：
+| 子节点名称 | 消息传递机制 |
+| ---------- | ------------------- |
+| LidarProcessSubnode | ROS发布与订阅机制 |
+| RadarProcessSubnode | ROS发布与订阅机制 |
+| FusionSubnode | 自定义ProcEvent消息处理机制，从LidarObjectData和RadarObjectData共享数据中手动提取数据 |
+| TLPreprocessorSubnode | ROS发布与订阅机制 |
+| TLProcSubnode | 自定义ProcEvent消息处理机制，从TLPreprocessingData共享数据中手动提取数据 |
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
