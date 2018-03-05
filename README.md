@@ -434,6 +434,117 @@ data_config {
 }
 ```
 
+(1) 在DAG三部分初始化过程中，子节点SubNode已经在上小节中完成初始化，5个子节点分别开启5个线程，每个线程设置对应的回调函数，当有输入的时候(收到ROS订阅的消息topic或者定时触发)，自动触发子节点功能。在代码中子节点的初始化工作包含SubNode配置记录(节点id，入度id，出度id)，子节点实例化。上小节"子节点SubNode初始化"讲述了子节点SubNode初始化仅仅创建实例化的函数，调用该函数可以实例化子节点，并保存在GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储中。本节是真正的实例化对象。
+
+```
+/// file in apollo/modules/perception/onboard/dag_streaming.cc
+bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
+  const DAGConfig::SubnodeConfig& subnode_config = dag_config.subnode_config();
+  const DAGConfig::EdgeConfig& edge_config = dag_config.edge_config();
+  
+  map<SubnodeID, DAGConfig::Subnode> subnode_config_map;
+  map<SubnodeID, vector<EventID>> subnode_sub_events_map;
+  map<SubnodeID, vector<EventID>> subnode_pub_events_map;
+   
+  for (auto& subnode_proto : subnode_config.subnodes()) {
+    std::pair<map<SubnodeID, DAGConfig::Subnode>::iterator, bool> result =
+        subnode_config_map.insert(std::make_pair(subnode_proto.id(), subnode_proto));
+    ...
+  }
+
+  for (auto& edge_proto : edge_config.edges()) {
+    SubnodeID from = edge_proto.from_node();
+    SubnodeID to = edge_proto.to_node();
+    ...
+    for (auto& event_proto : edge_proto.events()) {
+      subnode_pub_events_map[from].push_back(event_proto.id());
+      subnode_sub_events_map[to].push_back(event_proto.id());
+    }
+  }
+
+  // Generate Subnode instance.
+  for (auto pair : subnode_config_map) {
+    const DAGConfig::Subnode& subnode_config = pair.second;
+    const SubnodeID subnode_id = pair.first;
+    Subnode* inst = SubnodeRegisterer::GetInstanceByName(subnode_config.name());
+    ...
+    bool result = inst->Init(
+        subnode_config, &event_manager_, &shared_data_manager_,
+        subnode_sub_events_map[subnode_id], subnode_pub_events_map[subnode_id]);
+    ...
+    subnode_map_.emplace(subnode_id, std::unique_ptr<Subnode>(inst));
+  }
+  ...
+}
+
+/// file in apollo/modules/perception/lib/base/registerer.h
+#define REGISTER_REGISTERER(base_class)                               \
+  class base_class##Registerer {                                      \
+   public:                                                            \
+    static base_class *GetInstanceByName(const ::std::string &name) { \
+      FactoryMap &map = perception::GlobalFactoryMap()[#base_class];  \
+      FactoryMap::iterator iter = map.find(name);                     \
+      Any object = iter->second->NewInstance();                       \
+      return *(object.AnyCast<base_class *>());                       \
+    }                                                                 \
+};
+```
+
+(2) 在DAG初始化过程中，边Edge初始化需要依赖EvenManager完成，其实本质上Edge是数据的流动过程，也就是消息的订阅与发布过程，所以Apollo中使用EvenManager统一管理各个topic消息的订阅与发布
+
+```
+/// file in apollo/modules/perception/onboard/dag_streaming.cc
+bool DAGStreaming::Init(const string& dag_config_path) {
+  ...
+  if (!event_manager_.Init(dag_config.edge_config())) {
+    AERROR << "failed to Init EventManager. file: " << dag_config_path;
+    return false;
+  }
+  ...
+}
+
+/// file in aploo/modules/perception/onboard/event_manager.cc 
+bool EventManager::Init(const DAGConfig::EdgeConfig &edge_config) {
+  ...
+  for (const DAGConfig::Edge &edge : edge_config.edges()) {
+    for (const DAGConfig::Event event_pb : edge.events()) {
+      if (event_queue_map_.find(event_pb.id()) != event_queue_map_.end()) {
+        AERROR << "duplicate event id in config. id: " << event_pb.id();
+        return false;
+      }
+
+      event_queue_map_[event_pb.id()].reset(
+          new EventQueue(FLAGS_max_event_queue_size));
+
+      EventMeta event_meta;
+      event_meta.event_id = event_pb.id();
+      event_meta.name = event_pb.name();
+      event_meta.from_node = edge.from_node();
+      event_meta.to_node = edge.to_node();
+      event_meta_map_.emplace(event_pb.id(), event_meta);
+      AINFO << "load EventMeta: " << event_meta.to_string();
+    }
+  }
+  ...
+}
+
+/// file in apollo/modules/perception/onboard/dag_streaming.h
+class EventManager {
+  ...
+private:
+  using EventQueue = FixedSizeConQueue<Event>;
+  using EventQueueMap = std::unordered_map<EventID, std::unique_ptr<EventQueue>>;
+  using EventMetaMap = std::unordered_map<EventID, EventMeta>;
+
+  EventQueueMap event_queue_map_;
+  EventMetaMap event_meta_map_;
+};
+```
+由代码分析可知，EvenManager类包含两个主要的成员变量，分别保存<事件id，消息队列>的event_queue_map_，以及保存<事件id，事件信息>的event_meta_map_。一个事件的成分包含id和name。一个完成的Edge总体保存了事件信息(id，name)，入度节点(from_node)，出度节点(to_node)
+
+(3) 最后的共享数据初始化依赖
+
+
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
 ### <a name="信号灯感知">2.3 信号灯感知: Traffic Light Perception</a>
