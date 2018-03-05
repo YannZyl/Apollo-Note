@@ -193,7 +193,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 
 #### <a name="注册管理器初始化">2.1.1 Topic注册管理器初始化</a>
 
-#### <a name="共享数据类初始化>2.1.2 ShareData共享数据类初始化</a>
+#### <a name="共享数据类初始化">2.1.2 ShareData共享数据类初始化</a>
 
 ```
 /// file in apollo/modules/perception/perception.cc
@@ -300,7 +300,7 @@ BaseClassMap &GlobalFactoryMap();
 
 总结可知REGISTER_SHAREDDATA宏实际是创建共享数据容器类实例化与保存函数，通过调用该宏生成的函数可以方便的实例化对应的容易类并添加至全局工厂管理类，方便管理所有共享数据实例。E.g. 当在perception.cc的RegistAllOnboardClass中调用RegisterFactoryLidarObjectData()时，实际是实例化对应的容器类LidarObjectData，最终存储进GlobalFactoryMap中，存储的形式为：GlobalFactory[SharedData][LidarObjectData]两级存储。
 
-#### <a name="子节点类初始化">2.1.3 SubNode子节点类初始化/a>
+#### <a name="子节点类初始化">2.1.3 SubNode子节点类初始化</a>
 ```
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
@@ -390,7 +390,7 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析Subnode基类，
 
 从TLPreprocessorSubnode成员函数可以看到，子节点类主要为ROS消息发布与订阅机制(或者是定时触发机制)完善回调函数，在回调函数中执行相应的功能，5类子节点都具有相同的类形式，但功能不同。具体的功能在下小节描述。
 
-#### <a name="有向图初始化">2.1.4 DAG有向图初始化/a>
+#### <a name="有向图初始化">2.1.4 DAG有向图初始化</a>
 
 DAG初始化过程主要是构建子节点SubNode，边Edge和共享数据ShareData的一个有向图，关于有向图的三部分内容，程序从config文件读入
 ```
