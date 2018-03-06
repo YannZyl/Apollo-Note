@@ -22,9 +22,9 @@
 		- [2.1.4 DAG有向图初始化](#有向图初始化)
 		- [2.1.5 DAG整体运行实现感知](#DAG运行)
 	- [2.2 障碍物感知: 3D Obstacles Perception](#障碍物感知)
-		- [2.2.1 激光测距仪障碍物感知 LiDAR Obstacle Perception](#激光测距仪感知)
-		- [2.2.2 雷达障碍物感知 RADAR Obstacle Perception](#雷达感知)
-		- [2.2.3 障碍物结果融合](#障碍物结果融合)
+		- [2.2.1 激光测距仪障碍物感知: LiDAR Obstacle Perception](#激光测距仪感知)
+		- [2.2.2 雷达障碍物感知: RADAR Obstacle Perception](#雷达感知)
+		- [2.2.3 障碍物结果融合: Result Fusion](#障碍物结果融合)
 	- [2.3 信号灯感知: Traffic Light Perception](#信号灯感知)
 		- [2.3.1 信号灯预处理: Traffic Light Preprocess](#信号灯预处理)
 		- [2.3.2 信号灯处理: Traffic Light Process](#信号灯处理)
@@ -507,6 +507,8 @@ BaseClassMap &GlobalFactoryMap();
 
 与前小节类似，REGISTER_SUBNODE宏作用是生成对应的Subnode类，同时创建该Subnode类的实例化与保存函数，通过调用RegisterFactoryTLPreprocessorSubnode可以方便的实例化该子节点类，并保存到全局工厂管理类中，存储的形式为：GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储。
 
+注：代码上的细节，在这里需要对某些类进行全局工厂的存储，既包含SubNode，又包含了ShareData等类。代码上采用两级存储方式，GlobalFactoryMap为<string, map<string, ObjectFactory*>>类型，GlobalFactoryMap[sharedata]存储3类共享数据单例对象，例如，GlobalFactoryMap[sharedata][LidarObjectData]存雷达共享数据对象；GlobalFactoryMap[subnode]存储5类子节点单例对象，例如GlobalFactory[Subnode][TLPreprocessorSubnode]存信号灯预处理数据对象。代码中又是使用Any，又是使用ObjectFactory，还是用了REGISTER_REGISTERER(base_class)和REGISTER_class(clazz, name)宏，本质上是为了对GlobalFactoryMap里面的第二级对象类别进行封装，因为LidarObjectData和TLPreprocessorSubnode是无关类，因此需要将这些无关类封装进Any对象，Any中可以完成封装和装换。ObjectFactory是对各个Any的第二次封装，可以使用Any进行对应类的产生(NewInstance函数)。
+
 TLPreprocessorSubnode继承了Subnode类，可以进一步分析TLPreprocessorSubnod类成分，该类主要包含的元素如下
 
 | 名称 | 返回 | 备注 |
@@ -850,5 +852,47 @@ class TLPreprocessorSubnode : public Subnode {
 
 ### <a name="信号灯感知">2.3 信号灯感知: Traffic Light Perception</a>
 
+交通信号灯模块主要是提供精确的信号灯识别，通常信号灯有三种状态：
+
+- Red/红灯
+- Green/绿灯
+- Yellow/黄灯
+
+但是在实际生活中，有可能没有检测到信号灯(未知状态)，也有可能信号灯检测到了但是坏了(黑色状态)，为了充分考虑到所有的状态，在代码Apollo中一共设置了5种状态：
+
+- Red/红灯
+- Green/绿灯
+- Yellow/黄灯
+- Black/黑色
+- Unknown/未知
+
+在车辆形式的过程中，高清地图模块HD Map需要重复查询前方是否存在信号灯(注：为什么不直接使用实际摄像头拍摄到的图片进行信号灯存在与否的检测，因为HD Map上的路况图像质量必然不会比现实的差，而现实拍摄的路况图像很有可能受天气或者遮挡等影响而产生误差)。当然HD Map还需要与定位模块配合使用。信号灯可以使用4个角点来描述，如果在信号灯(HD Map中检测到信号灯)，而进一步需要将信号灯从3D的世界坐标系转换到2D的图像坐标系进行进一步的信号灯类型检测，这时候使用的是实际摄像头拍摄照片。
+
+之前的Apollo版本使用的是单摄像头解决方案，而且摄像头只有固定的视野域，不能看到所有的信号灯(前方和两侧)。该方案存在很大的限制因素，主要有：
+
+- 必须保证感知域在100米以上
+- 交通信号灯的高度或交叉口的宽度差异很大
+
+在Apollo 2.0中，采用了双摄像头扩大车辆的感知域。
+
+- 长焦摄像头(telephoto camera)，焦距为25mm，主要是拍摄前方较远距离的路况。使用长焦摄像头拍摄到的信号灯尺度大，比较清晰，容易被算法检测到。但是该类摄像头也有一定的缺陷，长焦相机能拍到较远处的信号灯，但是信号灯距离车辆过近亦或者信号灯偏向车辆两侧，长焦相机很大可能捕获不到信号灯图像。
+- 广角摄像头(wide-range camera)，焦距为6mm，解决长焦相机无法捕获近距离与两侧信号灯的问题。
+
+在实际检测过程中，使用哪个摄像头有信号灯投影决定。下图是长焦相机与广角相机拍摄的实际图片。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/telephoto_camera.jpg)
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/wide_range_camera.jpg)
+
+信号灯感知可以分为两个阶段：
+
+- 预处理阶段 Preprocess
+	- 信号灯投影 Traffic light projection
+	- 相机选择 Camera selection
+	- 图像与缓存信号灯同步 Image and cached lights sync
+- 处理节点 Process
+	- 整流 Rectify：提供准确的信号灯标定框
+	- 识别 Recognize：识别每个标定框对应的信号灯类型
+	- 修正 Revise：参考时间序列进行信号灯修正
 
 [返回目录](#目录头)
