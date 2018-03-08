@@ -253,7 +253,7 @@ Apollo中所有的topic有：
 | "/apollo/routing_request" | "routing request topic name" |
 | "/apollo/routing_response" | "routing response topic name" |
 | "/apollo/calibration/relative_odometry" | "relative odometry topic name" |
-| "/apollo/sensor/gnss/ins_stat" | "ins stat topic name") |
+| "/apollo/sensor/gnss/ins_stat" | "ins stat topic name" |
 | "/apollo/sensor/gnss/ins_status" | "ins status topic name" |
 | "/apollo/sensor/gnss/gnss_status" | "gnss status topic name" |
 | "/apollo/monitor/system_status" | "System status topic name" |
@@ -894,7 +894,7 @@ class TLPreprocessorSubnode : public Subnode {
 	- 识别 Recognize：识别每个标定框对应的信号灯类型
 	- 修正 Revise：参考时间序列进行信号灯修正
 
-#### <a name="信号灯与处理">2.3.1 信号灯预处理: Traffice Light Preprocess</a>
+#### <a name="信号灯预处理">2.3.1 信号灯预处理: Traffice Light Preprocess</a>
 
 预处理阶段不需要对每一帧图像进行信号灯检测，因为信号灯状态变化是低频的，持续时间相对较长，而且计算资源受限。通常情况下两个摄像头的图像同时到达，但是一般只处理一个摄像头的图像，因此相机的选择是很有必要的。
 
