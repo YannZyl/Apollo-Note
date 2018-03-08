@@ -1130,7 +1130,7 @@ b) 经过a)步骤的处理，可以得到若干摄像头，这些摄像头存在
 
 (2) 信号灯缓存同步
 
-在相机选择与信号灯缓存映射过程中，对于车辆不同位置查询高清地图产生的signals会进行一个相机选择，选择合适的能保证看到所有信号灯的相机。本次CameraSelection调用和上次CameraSelection调用比对，可能时间戳很相近但是camera id可能会不一样，也可能是camera id一样但时间戳差异很大，也可能没有缓存记录，这种情况下就不能确定当前时刻该使用哪个摄像头。因此信号灯缓存同步阶段的任务其实是一个check，承接上阶段的工作，每次产生的时间戳ts和相机id对，去和CameraSelection过程中缓存的ImageLights进行比对，如果缓存队列中的100个记录和当前的记录camera id相同，并且时间戳差异很小，则可以很自信的告诉Process阶段使用的camera id，否则就等待下一次回调，再次确认。导致确认失败的情况有多种：
+在相机选择与信号灯缓存映射过程中，对于车辆不同位置查询高清地图产生的signals会进行一个相机选择，选择合适的能保证看到所有信号灯的相机。本次CameraSelection调用和上次CameraSelection调用比对，可能时间戳很相近但是camera id可能会不一样，也可能是camera id一样但时间戳差异很大，也可能没有缓存记录，这种情况下就不能确定当前时刻该使用哪个摄像头。因此信号灯缓存同步阶段的任务其实是一个check，承接上阶段的工作，每次产生的时间戳ts和相机id对，去和CameraSelection过程中缓存的ImageLights进行比对，如果缓存队列中的100个记录和当前的记录camera id相同，并且时间戳差异很小，则该camera可以作为Process阶段被使用，否则就等待下一次回调，再次确认。导致确认失败的情况有多种：
 
 ```
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc
@@ -1156,5 +1156,47 @@ bool TLPreprocessor::SyncImage(const ImageSharedPtr &image, ImageLightsPtr *imag
 - 没有/tf(汽车定位信号)，因此也不具有signal信号
 - 时间戳漂移
 - Image未被选择，找不到匹配的camera或者找不到时间戳差异较小的缓存记录
+
+当前时刻虽然利用camera id和时间戳ts找到了合适的camera，并不能立即结束Preprocess阶段，这个时候还有一个工作，就是再次check，保证此刻由高清地图查询到的signal里面的信号灯都暴露在这个摄像头内。所以代码中调用VerifyLightsProjection函数进行二次验证，实际上是简介再次调用ProjectLights验证。
+
+当二次验证也通过时，就可以发布信息给Process阶段进行后续处理。
+
+```
+/// file in apollo/modules/perception/traffic_light/preprocessor/tl_preprocessor.cc
+void TLPreprocessorSubnode::SubCameraImage(boost::shared_ptr<const sensor_msgs::Image> msg, CameraId camera_id) {
+  ...
+  AddDataAndPublishEvent(image_lights, camera_id, image->ts())
+}
+
+bool TLPreprocessorSubnode::AddDataAndPublishEvent(
+    const std::shared_ptr<ImageLights> &data, const CameraId &camera_id,
+    double timestamp) {
+  // add data down-stream
+  std::string device_str = kCameraIdToStr.at(camera_id);
+  std::string key;
+  if (!SubnodeHelper::ProduceSharedDataKey(timestamp, device_str, &key)) {
+    return false;
+  }
+  if (!preprocessing_data_->Add(key, data)) {  //TLPreprocessingData *preprocessing_data_
+    data->image.reset();
+    return false;
+  }
+  // pub events
+  for (size_t i = 0; i < this->pub_meta_events_.size(); ++i) {
+    const EventMeta &event_meta = this->pub_meta_events_[i];
+    Event event;
+    event.event_id = event_meta.event_id;
+    event.reserve = device_str;
+    event.timestamp = timestamp;
+    this->event_manager_->Publish(event);
+  }
+  return true;
+}
+```
+
+代码显示信息发布过程是人为的写入共享数据类队列中TLPreprocessingData，而event_manager做信息记录。
+
+#### <a name="信号灯处理">2.3.2 信号灯处理: Traffic Light Process</a>
+
 	
 [返回目录](#目录头)
