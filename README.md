@@ -1154,8 +1154,8 @@ bool TLPreprocessor::SyncImage(const ImageSharedPtr &image, ImageLightsPtr *imag
 
 总结一下SynImage失败的原因：
 
-    a) 没有/tf(汽车定位信号)，因此也不具有signal信号
-    b) 时间戳漂移
-	c) Image未被选择，找不到匹配的camera或者找不到时间戳差异较小的缓存记录
+	- 没有/tf(汽车定位信号)，因此也不具有signal信号
+ 	- 时间戳漂移
+ 	- Image未被选择，找不到匹配的camera或者找不到时间戳差异较小的缓存记录
 	
 [返回目录](#目录头)
