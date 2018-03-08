@@ -894,6 +894,8 @@ class TLPreprocessorSubnode : public Subnode {
 	- 识别 Recognize：识别每个标定框对应的信号灯类型
 	- 修正 Revise：参考时间序列进行信号灯修正
 
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/framework_traffic_lights.png)
+
 #### <a name="信号灯预处理">2.3.1 信号灯预处理: Traffice Light Preprocess</a>
 
 预处理阶段不需要对每一帧图像进行信号灯检测，因为信号灯状态变化是低频的，持续时间相对较长，而且计算资源受限。通常情况下两个摄像头的图像同时到达，但是一般只处理一个摄像头的图像，因此相机的选择是很有必要的。
@@ -1198,5 +1200,12 @@ bool TLPreprocessorSubnode::AddDataAndPublishEvent(
 
 #### <a name="信号灯处理">2.3.2 信号灯处理: Traffic Light Process</a>
 
-	
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_process.png)
+
+在信号灯预处理Preprocess子节点完成工作并发布信息时，信号灯处理阶段Process节点将会开启正常处理流程。上图是信号灯处理流程图，从代码层面来看，处理阶段并不是采用ROS topic的消息订阅机制，而是采用共享数据类的方法进行输入的提取(具体说明请参考[DAG运行](#DAG运行))。处理阶段工作比较简单，主要是使用预处理阶段建议的摄像头，以及由高清地图查询得到信号灯在该摄像头下2D图像坐标系中的标定框project_roi，匹配真实路况图像(摄像头提取)，获取真实图像下信号灯的标定框，进行整流，识别与校验。最终得到各个信号灯的状态信息。
+
+(1) 整流器 Rectifier
+
+输入包含检测使用的摄像头，映射过后的2D图像坐标系信号灯标定框，
+
 [返回目录](#目录头)
