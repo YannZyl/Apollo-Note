@@ -1085,11 +1085,7 @@ bool TLPreprocessor::CacheLightsProjections(const CarPose &pose, const std::vect
 
 从上述代码可以看到信号缓存过程，其实是收集来自高清地图的信号灯信息，然后一并将这些信号灯的东西与其他的相机id，时间戳ts，汽车姿态信息pose等一并进行缓存，方便接下去利用过往的信息进行信号灯状态矫正。在代码中，允许最大缓存信号灯信息数量为max_cached_lights_size=100，该阶段当缓冲队列溢出时，删除队列头最早的缓存信息
 
-上面的代码ProjectLights函数负责对高清地图查询结果signals(vector)进行坐标系变换，并且得到映射后的信号灯2D坐标，判断哪些信号灯在2个摄像头的图像区域以外，哪些信号灯在图像区域内
-
-E.g. 如果某信号灯经过坐标系变换后在长焦摄像头图像内，那么就可以考虑使用长焦摄像头进行实际路况下的图像采集，很大可能实际图像能捕获到该信号灯，可以进行状态检测
-
-ProjectLights函数最终得到的结果存储在lights_on_image(vector)和lights_outside_image(vector)，每个向量里面都保存了原始signal以及变换后的2D坐标signal。
+上面的代码ProjectLights函数负责对高清地图查询结果signals(vector)进行坐标系变换，并且得到映射后的信号灯2D坐标，判断哪些信号灯在2个摄像头的图像区域以外，哪些信号灯在图像区域内。如果某信号灯经过坐标系变换后在长焦摄像头图像内，那么就可以考虑使用长焦摄像头进行实际路况下的图像采集，很大可能实际图像能捕获到该信号灯，可以进行状态检测ProjectLights函数最终得到的结果存储在lights_on_image(vector)和lights_outside_image(vector)，每个向量里面都保存了原始signal以及变换后的2D坐标signal。
 
 E.g. 如果signal A坐标系映射后标定框在长焦摄像头下但不在广角摄像头下，那么可以将signal A保存在lights_on_image[0]下，同时复制一份保存在lights_outside_image[1]，0号索引代表长焦摄像头，1号索引代表广角摄像头。
 
@@ -1158,8 +1154,8 @@ bool TLPreprocessor::SyncImage(const ImageSharedPtr &image, ImageLightsPtr *imag
 
 总结一下SynImage失败的原因：
 
-    1. 没有/tf(汽车定位信号)，因此也不具有signal信号
-    2. 时间戳漂移
-	3. Image未被选择，找不到匹配的camera或者找不到时间戳差异较小的缓存记录
+    a) 没有/tf(汽车定位信号)，因此也不具有signal信号
+    b) 时间戳漂移
+	c) Image未被选择，找不到匹配的camera或者找不到时间戳差异较小的缓存记录
 	
 [返回目录](#目录头)
