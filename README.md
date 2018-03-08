@@ -920,6 +920,7 @@ boundary {
 ```
 
 相机选择阶段输入通过ROS topic订阅得到，包括：
+
 	- 长焦相机topic：/apollo/sensor/camera/traffic/image_long
 	- 广角相机topic：/apollo/sensor/camera/traffic/image_short
 	- 定位信息topic，/tf
@@ -1082,14 +1083,17 @@ bool TLPreprocessor::CacheLightsProjections(const CarPose &pose, const std::vect
 }
 ```
 
-从上述代码可以看到信号缓存过程，其实是收集来自高清地图的信号灯信息，然后一并将这些信号灯的东西与其他的相机id(选择合适的相机，接下去可以获取相机图像，检测信号等状态)，时间戳，汽车姿态信息等一并进行缓冲，方便接下去利用过往的信息进行信号灯状态矫正。在代码中，允许最大缓存信号灯信息数量为max_cached_lights_size=100，该阶段当缓冲队列溢出时，删除队列头最早的缓存信息
+从上述代码可以看到信号缓存过程，其实是收集来自高清地图的信号灯信息，然后一并将这些信号灯的东西与其他的相机id，时间戳ts，汽车姿态信息pose等一并进行缓存，方便接下去利用过往的信息进行信号灯状态矫正。在代码中，允许最大缓存信号灯信息数量为max_cached_lights_size=100，该阶段当缓冲队列溢出时，删除队列头最早的缓存信息
 
 上面的代码ProjectLights函数负责对高清地图查询结果signals(vector)进行坐标系变换，并且得到映射后的信号灯2D坐标，判断哪些信号灯在2个摄像头的图像区域以外，哪些信号灯在图像区域内
+
 E.g. 如果某信号灯经过坐标系变换后在长焦摄像头图像内，那么就可以考虑使用长焦摄像头进行实际路况下的图像采集，很大可能实际图像能捕获到该信号灯，可以进行状态检测
 
-ProjectLights函数最多得到的结果存储在lights_on_image(vector)和lights_outside_image(vector)，每个向量里面都保存了原始signal以及变换后的2D坐标signal。
+ProjectLights函数最终得到的结果存储在lights_on_image(vector)和lights_outside_image(vector)，每个向量里面都保存了原始signal以及变换后的2D坐标signal。
+
 E.g. 如果signal A坐标系映射后标定框在长焦摄像头下但不在广角摄像头下，那么可以将signal A保存在lights_on_image[0]下，同时复制一份保存在lights_outside_image[1]，0号索引代表长焦摄像头，1号索引代表广角摄像头。
-E.g. 如果signal A坐标系映射后标定框同时存在长焦摄像头和广角摄像头下，那么可以将signal B保存在lights_on_image[0]下，同时复制一份保存在lights_on_image[1]，0号索引代表长焦摄像头，1号索引代表广角摄像头。
+
+E.g. 如果signal B坐标系映射后标定框同时存在长焦摄像头和广角摄像头下，那么可以将signal B保存在lights_on_image[0]下，同时复制一份保存在lights_on_image[1]，0号索引代表长焦摄像头，1号索引代表广角摄像头。
 
 ```
 void TLPreprocessor::SelectImage(const CarPose &pose,
@@ -1125,11 +1129,12 @@ void TLPreprocessor::SelectImage(const CarPose &pose,
 上述为SelectImage函数，利用前面的ProjectLights函数对各个信号灯是否在长焦相机和广角相机中检测结果(lights_on_image和lights_outside_image)，选择合适的camera。该函数的很容易理解，主要工作如下，遍历2个摄像头所对应的lights_on_image和lights_outside_image保存的ImageLights：
 
 a) 如果该摄像头的lights_outside_image不为空，即存在某些信号灯映射过后都不暴露在该摄像头下，那么放弃这个摄像头。因为按理说每次都只取一个摄像头的图像进行处理，所以依赖一个摄像头不能处理全部信号灯，放弃该摄像头。
-b) 经过a)步骤的处理，可以得到若干摄像头，这些摄像头存在一个共性，都能看到映射过后的所有信号灯。接来下就需要从中选择一个摄像头使用，默认是用广角摄像头(短焦)，如果长焦也能看到所有的信号灯，那么就需要给定一个判断前提：如果信号灯的标定框都在图像有效区域(代码中使用的投影图像大小为1080p/1920x1080，默认图像四周100以内的像素块为边界区，不能被使用，即真正的有效区域为[10:1070,10:1910]。如果信号灯标定框落在这个区域之外，则视为无效处理)，则可以选择长焦摄像头，否则选择短焦摄像头。
+
+b) 经过a)步骤的处理，可以得到若干摄像头，这些摄像头存在一个共性：都能看到映射过后的所有信号灯。接来下就需要从中选择一个摄像头使用，默认是用广角摄像头(短焦)，如果长焦也能看到所有的信号灯，那么就需要给定一个判断前提：如果信号灯的标定框都在图像有效区域(代码中使用的投影图像大小为1080p/1920x1080，默认图像四周100以内的像素块为边界区，不能被使用，即真正的有效区域为[100:980,100:1820]。如果信号灯标定框落在这个区域之外，则视为无效处理)，则可以选择长焦摄像头，否则选择短焦摄像头。
 
 (2) 信号灯缓存同步
 
-在相机选择与信号灯缓存映射过程中，对于车辆不同位置查询高清地图产生的signals会进行一个相机选择，选择合适的能保证看到所有信号灯的相机。本次CameraSelection调用和上次CameraSelection调用时间戳可能很接近，但是camera id可能会不一样，这种情况下就不能确定当前时刻该使用哪个摄像头。因此信号灯缓存同步阶段的任务其实是一个check，承接上阶段的工作，每次产生的时间戳ts和相机id对，去和CameraSelection过程中缓存的ImageLights进行比对，如果缓存队列中的100个记录和当前的记录，camera id相同，并且时间戳差异很小，则可以很自信的告诉Process阶段使用的camera id，否则就等待下一次回调，再次确认。导致确认失败的情况有多种：
+在相机选择与信号灯缓存映射过程中，对于车辆不同位置查询高清地图产生的signals会进行一个相机选择，选择合适的能保证看到所有信号灯的相机。本次CameraSelection调用和上次CameraSelection调用比对，可能时间戳很相近但是camera id可能会不一样，也可能是camera id一样但时间戳差异很大，也可能没有缓存记录，这种情况下就不能确定当前时刻该使用哪个摄像头。因此信号灯缓存同步阶段的任务其实是一个check，承接上阶段的工作，每次产生的时间戳ts和相机id对，去和CameraSelection过程中缓存的ImageLights进行比对，如果缓存队列中的100个记录和当前的记录camera id相同，并且时间戳差异很小，则可以很自信的告诉Process阶段使用的camera id，否则就等待下一次回调，再次确认。导致确认失败的情况有多种：
 
 ```
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc
@@ -1152,8 +1157,9 @@ bool TLPreprocessor::SyncImage(const ImageSharedPtr &image, ImageLightsPtr *imag
 ```
 
 总结一下SynImage失败的原因：
-	1. Image未被选择，找不到匹配的camera
-	2. 时间戳漂移
-	3. 没有信号，最找不到时间戳相近的记录
 
+    1. 没有/tf(汽车定位信号)，因此也不具有signal信号
+    2. 时间戳漂移
+	3. Image未被选择，找不到匹配的camera或者找不到时间戳差异较小的缓存记录
+	
 [返回目录](#目录头)
