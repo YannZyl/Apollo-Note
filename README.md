@@ -1289,7 +1289,12 @@ bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std:
 
 以上代码清晰的反映了ROI检测的流程，对CropBox产生的ROI--cbox进行网络的检测，得到结果detected_bboxes包含了ROI内所有的信号灯信息，然后对每个信号灯标定框践行筛选，去除落在ROI以外的bbox，然后矫正标定框，加上cbox.x和y映射到整体Image的x和y。最后对所有的hdmap_bboxes和detect_boxes进行匹配，得到整流过后的标定框。另外一些细节问题：
 
-- 检测网络使用的是基于ResNet50的RFCN，每张输入的图片经过预处理，最短边保持一致(由crop_min_size控制，默认300)
+- 检测网络使用的是基于ResNet50的RFCN，每张输入的图片经过预处理，最短边保持一致(由crop_min_size控制，默认300)，网络输出分类信息和标定框信息，分类信息包含四类(DetectionClassId)：
+
+	- UNKNOWN_CLASS: 未知类型，即不存在信号灯
+	- VERTICAL_CLASS: 竖型信号灯
+	- QUADRATE_CLASS: 方型信号灯
+	- HORIZONTAL_CLASS: 横型信号灯
 
 ```
 /// file in apollo/modules/perception/traffic_light/rectify/select.cc
@@ -1343,6 +1348,121 @@ void GaussianSelect::Select(const cv::Mat &ros_image,
 	- detect_bbox的RFCN检测评分score越大，评分越大，占比0.4
 	- detect_bbox面积越大，评分越大，占比0.2
 
-- 当然还有一种情况，如果dectect_bbox在实际检测过程中没有检测到任何的信号灯，则就把该信号灯状态直接置为unknown，跳过后续的recognizer和reviser阶段，因为没必要再检测。
+- 当然还有一种情况，如果RFCN在ROI实际检测过程中没有检测到任何的信号灯dectect_bbox为空，则就把该信号灯状态直接置为unknown，跳过后续的recognizer和reviser阶段，因为没必要再检测。
+
+(2) 识别器 Recognizer
+
+识别器主要工作是对整流器Rectifier得到的整流映射bbox(上述与hdmap_bbox匹配的detect_bbox)，识别过程比较简单，针对竖型，横型(不使用)，方型采用不同的检测网络，本质区别在于输入大小不一致。竖型接受的输入大小为96x32，使用白天模型；方型接受的输入大小为64x64，使用夜晚模型。
+
+```
+/// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
+bool TLProcSubnode::ProcEvent(const Event &event) {
+  // get data from sharedata which pulish by Preprocess SubNode
+  ...
+  // verify image_lights from cameras
+  ...
+  // using rectifier to rectify the region.
+  ...
+  // recognize_status
+  const double before_recognization_ts = TimeUtil::GetCurrentTime();
+  if (!recognizer_->RecognizeStatus(*(image_lights->image), RecognizeOption(), (image_lights->lights).get())) {
+    return false;
+  }
+  ...
+}
+
+/// file in apollo/modules/perception/traffic_light/recognizer/unity_recognize.cc 
+bool UnityRecognize::RecognizeStatus(const Image &image, const RecognizeOption &option, std::vector<LightPtr> *lights) {
+  for (LightPtr light : *lights) {
+    if (light->region.is_detected) {
+      candidate[0] = light;
+      if (light->region.detect_class_id == QUADRATE_CLASS) {
+        classify_night_->Perform(ros_image, &candidate);
+      } else if (light->region.detect_class_id == VERTICAL_CLASS) {
+        classify_day_->Perform(ros_image, &candidate);
+      } else {
+        AINFO << "Not support yet!";
+      }
+    } else {
+      light->status.color = UNKNOWN_COLOR;
+      light->status.confidence = 0;
+    }
+  }
+  return true;
+}
+```
+
+另外一个细节，识别过程中白天和夜晚两个模型使用的是比较简单的CNN(5convs+2fc)，输出的信号灯四类状态：
+	
+	- BLACK: 黑色，故障或者正在转换
+	- RED: 红色
+	- YELLOW: 黄色
+	- GREEN: 绿色
+
+为了确保较高的可靠性，最终的检测结果对应的score必须大于一定的阈值才算有效，否则置为BLACK。阈值由classify_threshold控制，默认为0.5
+
+(3) 校验器 Reviser
+
+由识别器识别得到的信号灯状态并不一定准确，有时候识别得到信号灯是黑色BLACK，但是实际可能是由红色RED向绿色GREEN装换过程。所以校验器的工作就是利用缓存信息对当前信号灯状态做一个校验。具体的方法比较简单：如果Recognizer是别的是红灯RED或者绿灯GREED，直接存储缓存；如果识别到了黑色BLACK和未知UNKNOWN，则需要从缓存中提取近期时间段内的信号灯状态数据进行比对，进行下一步校验。
+
+另外一个先验，信号灯变换总是有一定规律的，一般是红RED-绿GREED-黄YELLOW，反复循环。如果缓存中上时刻监测到的是红色RED，而现在时刻确实YELLOW，这是不可能的，所以刷新状态变为红色RED，直到检测到信号灯状态变为绿色GREEN才能前进。
+
+```
+/// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
+bool TLProcSubnode::ProcEvent(const Event &event) {
+  // get data from sharedata which pulish by Preprocess SubNode
+  ...
+  // verify image_lights from cameras
+  ...
+  // using rectifier to rectify the region.
+  ...
+  // recognize_status
+  ...
+  // using rectifier to rectify the region.
+  if (!rectifier_->Rectify(*(image_lights->image), rectify_option, (image_lights->lights).get())) {
+    return false;
+  }
+}
+
+/// file in apollo/modules/perception/traffic_light/reviser/color_decision.cc
+bool ColorReviser::Revise(const ReviseOption &option, std::vector<LightPtr> *lights) {
+  for (size_t i = 0; i < lights_ref.size(); ++i) {
+  	std::string id = lights_ref[i]->info.id().id();
+    switch (lights_ref[i]->status.color) {
+      default:
+      case BLACK:
+      case UNKNOWN_COLOR:
+        if (color_map_.find(id) != color_map_.end() && option.ts > 0 && option.ts - time_map_[id] < blink_time_) {
+          lights_ref[i]->status.color = color_map_[id];
+        } 
+        break;
+      case YELLOW:
+        // if YELLOW appears after RED, revise it to RED
+        if (color_map_.find(id) != color_map_.end() && option.ts > 0 && color_map_.at(id) == RED) {
+          lights_ref[i]->status.color = color_map_.at(id);
+          color_map_[id] = RED;
+          time_map_[id] = option.ts;
+          break;
+        }
+      case RED:
+      case GREEN:
+        if (time_map_.size() > 10) {
+          color_map_.clear();
+          time_map_.clear();
+        }
+        color_map_[id] = lights_ref[i]->status.color;
+        time_map_[id] = option.ts;
+        break;
+    }
+  }
+  return true;
+}
+```
+
+具体的校验规则很简单：
+	
+	- 如果检测到的是BLACK或者UNKNOWN，查询缓存，缓存中由上时刻该信号灯(id必须一致)信息，并且两个时间差小与一个阈值(由blink_time_控制，默认)，则使用缓存中的状态作为当前信号灯状态。
+	- 如果检测到是YELLOW，查看缓存，如果缓存中上时刻状态是RED，那么刷新变成RED；否则保留YELLOW状态
+	- 如果是RED或者GREEN，则刷新缓存，缓存中对应id的信号灯状态修改为当前状态。当然如果缓存时间过长，那么已经过掉路口了，对应的信号灯就没意义了，这时候可以清楚缓存，重新保存。
 
 [返回目录](#目录头)
