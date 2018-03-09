@@ -844,9 +844,9 @@ class TLPreprocessorSubnode : public Subnode {
 | ---------- | ------------------- |
 | LidarProcessSubnode | ROS发布与订阅机制 |
 | RadarProcessSubnode | ROS发布与订阅机制 |
-| FusionSubnode | 自定义ProcEvent消息处理机制，从LidarObjectData和RadarObjectData共享数据中手动提取数据 |
+| FusionSubnode | 自定义ProcEvents消息处理机制，从LidarObjectData和RadarObjectData共享数据中手动提取数据 |
 | TLPreprocessorSubnode | ROS发布与订阅机制 |
-| TLProcSubnode | 自定义ProcEvent消息处理机制，从TLPreprocessingData共享数据中手动提取数据 |
+| TLProcSubnode | 自定义ProcEvents消息处理机制，从TLPreprocessingData共享数据中手动提取数据 |
 
 ### <a name="障碍物感知">2.2 障碍物感知: 3D Obstacles Perception</a>
 
@@ -1132,7 +1132,9 @@ b) 经过a)步骤的处理，可以得到若干摄像头，这些摄像头存在
 
 (2) 信号灯缓存同步
 
-在相机选择与信号灯缓存映射过程中，对于车辆不同位置查询高清地图产生的signals会进行一个相机选择，选择合适的能保证看到所有信号灯的相机。本次CameraSelection调用和上次CameraSelection调用比对，可能时间戳很相近但是camera id可能会不一样，也可能是camera id一样但时间戳差异很大，也可能没有缓存记录，这种情况下就不能确定当前时刻该使用哪个摄像头。因此信号灯缓存同步阶段的任务其实是一个check，承接上阶段的工作，每次产生的时间戳ts和相机id对，去和CameraSelection过程中缓存的ImageLights进行比对，如果缓存队列中的100个记录和当前的记录camera id相同，并且时间戳差异很小，则该camera可以作为Process阶段被使用，否则就等待下一次回调，再次确认。导致确认失败的情况有多种：
+在相机选择与信号灯缓存映射过程中，对于车辆不同位置查询高清地图产生的signals会进行一个相机选择，选择合适的能保证看到所有信号灯的相机。本应该就可以直接发布对应的摄像头id，摄像头采集的真实路况图像，信号灯标定框信息给Process阶段，但是由于CameraSelection是低频调用的，因此每次执行回调函数的时候CameraSelection不一定都会被执行，这就导致不执行CameraSlection函数的回调过程需要进行一次确认，确认通过才能发布信息，否则本次回调不发布信息。(本次CameraSelection调用和上次CameraSelection调用比对，可能时间戳很相近但是camera id可能会不一样，也可能是camera id一样但时间戳差异很大，也可能没有缓存记录，这种情况下就不能确定当前时刻该使用哪个摄像头。)
+
+因此信号灯缓存同步阶段的任务其实是一个check，针对那些没有执行CameraSelection函数的回调过程，根据每次产生的时间戳ts和相机id对，去和CameraSelection过程中缓存的ImageLights进行比对，如果缓存队列中的100个记录和当前的记录camera id相同，并且时间戳差异很小，则该camera可以作为Process阶段被使用，否则就等待下一次回调，再次确认。导致确认失败的情况有多种：
 
 ```
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc
