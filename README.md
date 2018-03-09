@@ -1214,7 +1214,7 @@ bool TLPreprocessorSubnode::AddDataAndPublishEvent(
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/rectifier.jpg)
 
-如上图，在高清地图3D坐标到摄像头2D坐标转换的过程中，得到2D信号灯坐标实际并不准确，存在一定程度的偏差。图中蓝色标定框是3D到2D转换过程中得到的映射结果，实际上是右边绿灯信号灯的标定框，奈何存在较大不可控的误差。如何解决映射过程中坐标的漂移？在代码中采用了ROI生成+信号灯重新检测的方案：首先将映射的标定框中心店固定，宽高以一定的scale扩大(Apollo中由crop_scale控制，默认2.5倍)得到更大的ROI区域，这个ROI区域非常大概率的包含了信号灯。然后，使用检测网络(resnet-rfcn)从这个ROI区域中检测得到信号灯的真实坐标。由于ROI相对较小，检测速度比较快。
+如上图，在高清地图3D坐标到摄像头2D坐标转换的过程中，得到2D信号灯坐标实际并不准确，存在一定程度的偏差。图中蓝色标定框是3D到2D转换过程中得到的映射结果，实际上是右边绿灯信号灯的标定框，奈何存在较大不可控的误差。如何解决映射过程中坐标的漂移？在代码中采用了ROI生成+信号灯重新检测的方案：首先将映射的标定框中心点固定，宽高以一定的scale扩大(Apollo中由crop_scale控制，默认2.5倍)得到更大的ROI区域(图中黄色区域)，这个ROI区域非常大概率的包含了信号灯。然后，使用检测网络(resnet-rfcn)从这个ROI区域中检测得到信号灯的真实坐标。由于ROI相对较小，检测速度比较快。
 
 ```
 /// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
@@ -1270,9 +1270,9 @@ void CropBox::GetCropBox(const cv::Size &size, const std::vector<LightPtr> &ligh
 /// file in apollo/modules/perception/traffic_light/rectify/unity_rectify.cc
 bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std::vector<LightPtr> *lights) {
   for (auto &light : lights_ref) {
-  	// CropBox via crop_scale
-  	...
-  	// dection form croped box
+    // CropBox via crop_scale
+    ...
+    // dection form croped box
     detect_->SetCropBox(cbox);
     detect_->Perform(ros_image, &detected_bboxes);
     for (size_t j = 0; j < detected_bboxes.size(); ++j) {
@@ -1287,7 +1287,7 @@ bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std:
 }
 ```
 
-以上代码清晰的反映了ROI检测的流程，对CropBox产生的ROI--cbox进行网络的检测，得到结果detected_bboxes包含了ROI内所有的信号灯信息，然后对每个信号灯标定框践行筛选，去除落在ROI以外的bbox，然后矫正标定框，加上cbox.x和y映射到整体Image的x和y。最后对所有的bounding boxes进行NMS冗余筛选，去除覆盖较大的次要标定框。另外一些细节问题：
+以上代码清晰的反映了ROI检测的流程，对CropBox产生的ROI--cbox进行网络的检测，得到结果detected_bboxes包含了ROI内所有的信号灯信息，然后对每个信号灯标定框践行筛选，去除落在ROI以外的bbox，然后矫正标定框，加上cbox.x和y映射到整体Image的x和y。最后对所有的hdmap_bboxes和detect_boxes进行匹配，得到整流过后的标定框。另外一些细节问题：
 
 (1) 检测网络使用的是基于ResNet50的RFCN，每张输入的图片经过预处理，最短边保持一致(由crop_min_size控制，默认300)
 
@@ -1305,7 +1305,7 @@ void GaussianSelect::Select(const cv::Mat &ros_image,
                                 rhs->region.rectified_roi.area();
                        });
 
-  //  cv::Mat_<int> cost_matrix(hdmap_bboxes.size(), refined_bboxes.size());
+  // cv::Mat_<int> cost_matrix(hdmap_bboxes.size(), refined_bboxes.size());
   std::vector<std::vector<double> > score_matrix( hdmap_bboxes.size(), std::vector<double>(refined_bboxes.size(), 0));
   for (size_t row = 0; row < hdmap_bboxes.size(); ++row) {
     cv::Point2f center_hd = GetCenter(hdmap_bboxes[row]->region.rectified_roi);
@@ -1337,10 +1337,12 @@ void GaussianSelect::Select(const cv::Mat &ros_image,
   }
 ```
 
-(2) Select函数是标定框选择函数。由映射坐标经过wrap，crop得到的ROI可能包含多个信号灯情况，而实际上每个映射坐标只对应ROI中的某一个bbox，如何进行匹配？在代码中可以看到匹配方法。hdmap给出了m个映射bbox，实际RFCN检测到了n个bbox，那么可以构建一个mxn的矩阵，矩阵中每个元素代表两两相似度评估。评估标准是：hdmap_bbox和detect_bbox中心和宽度距离信息、detect_bbox检测评分score、面积信息。Get2dGaussianScore和Get1dGaussianScore是标准的二维/一维高斯函数。
+(2) Select函数是hdmap_bbox与detect_bbox标定框选择与匹配函数。由映射坐标经过wrap，crop得到的ROI可能包含多个信号灯情况，而实际上每个映射坐标只对应ROI中的某一个bbox，如何进行匹配？在代码中可以看到匹配方法。hdmap给出了m个映射bbox，实际RFCN检测到了n个bbox，那么可以构建一个mxn的矩阵，矩阵中每个元素代表两两相似度评估。评估标准是：hdmap_bbox和detect_bbox中心和宽度距离信息、detect_bbox检测评分score、面积信息。Get2dGaussianScore和Get1dGaussianScore是标准的二维/一维高斯函数。
 
 - hdmap_bbox和detect_bbox中心和宽度月相近，评分越大，占比0.2, 0.2
 - detect_bbox的RFCN检测评分score越大，评分越大，占比0.4
 - detect_bbox面积越大，评分越大，占比0.2
+
+(3) 当然还有一种情况，如果dectect_bbox在实际检测过程中没有检测到任何的信号灯，则就把该信号灯状态直接置为unknown，跳过后续的recognizer和reviser阶段，因为没必要再检测。
 
 [返回目录](#目录头)
