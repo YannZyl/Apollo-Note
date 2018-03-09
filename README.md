@@ -898,7 +898,9 @@ class TLPreprocessorSubnode : public Subnode {
 
 #### <a name="信号灯预处理">2.3.1 信号灯预处理: Traffice Light Preprocess</a>
 
-预处理阶段不需要对每一帧图像进行信号灯检测，因为信号灯状态变化是低频的，持续时间相对较长，而且计算资源受限。通常情况下两个摄像头的图像同时到达，但是一般只处理一个摄像头的图像，因此相机的选择是很有必要的。
+预处理阶段主要的工作是为信号灯处理阶段Traffic Light Process选择合适的相机。针对每个路况下车辆的定位与姿态，查询高清地图HD Map得到该路况下的信号灯情况(是否存在，存在的话位置多少)，然后将3D世界坐标系下的信号灯坐标分别投影到长焦和广角摄像头下的2D图像坐标系。接着根据投影过后新的信号灯是否全部暴露在摄像头下，来选择合适的摄像头。最终将摄像头id，采集到的真实路况图像，投影过后信号灯等信息发布给Process进行信号灯的状态识别。
+
+预处理阶段不需要对每一帧图像进行信号灯查询，因为信号灯状态变化是低频的，持续时间相对较长，而且计算资源受限。通常情况下两个摄像头的图像同时到达，但是一般只处理一个摄像头的图像，因此相机的选择是很有必要的。
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_preprocess.png)
 
@@ -1204,10 +1206,141 @@ bool TLPreprocessorSubnode::AddDataAndPublishEvent(
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_process.png)
 
-在信号灯预处理Preprocess子节点完成工作并发布信息时，信号灯处理阶段Process节点将会开启正常处理流程。上图是信号灯处理流程图，从代码层面来看，处理阶段并不是采用ROS topic的消息订阅机制，而是采用共享数据类的方法进行输入的提取(具体说明请参考[DAG运行](#DAG运行))。处理阶段工作比较简单，主要是使用预处理阶段建议的摄像头，以及由高清地图查询得到信号灯在该摄像头下2D图像坐标系中的标定框project_roi，匹配真实路况图像(摄像头提取)，获取真实图像下信号灯的标定框，进行整流，识别与校验。最终得到各个信号灯的状态信息。
+在信号灯预处理Preprocess子节点完成工作并发布信息时，信号灯处理阶段Process节点将会开启正常处理流程。具体的思路是：某一时刻，在预处理Preprocess阶段利用车辆定位和姿态信息，查询高清地图得到当前location和pose下面的信号灯信息signals，经过相机选择与信号灯映射，将高清地图3D世界坐标系中的信号灯坐标映射到摄像头2D图像坐标系中信号灯坐标。在Process阶段，就需要利用这些坐标，配合采集到的真实图像， 进行信号灯的定位与检测。
+
+上图是信号灯处理流程图，从代码层面来看，处理阶段并不是采用ROS topic的消息订阅机制，而是采用共享数据类存储的方法进行输入输出提取与存储(具体说明请参考[DAG运行](#DAG运行))。处理阶段工作比较简单，主要是使用预处理阶段建议的摄像头，以及由高清地图查询得到信号灯在该摄像头下2D图像坐标系中的标定框project_roi，匹配真实路况图像(摄像头提取)，获取真实图像下信号灯的标定框，进行整流，识别与校验。最终得到各个信号灯的状态信息。
 
 (1) 整流器 Rectifier
 
-输入包含检测使用的摄像头，映射过后的2D图像坐标系信号灯标定框，
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/rectifier.jpg)
+
+如上图，在高清地图3D坐标到摄像头2D坐标转换的过程中，得到2D信号灯坐标实际并不准确，存在一定程度的偏差。图中蓝色标定框是3D到2D转换过程中得到的映射结果，实际上是右边绿灯信号灯的标定框，奈何存在较大不可控的误差。如何解决映射过程中坐标的漂移？在代码中采用了ROI生成+信号灯重新检测的方案：首先将映射的标定框中心店固定，宽高以一定的scale扩大(Apollo中由crop_scale控制，默认2.5倍)得到更大的ROI区域，这个ROI区域非常大概率的包含了信号灯。然后，使用检测网络(resnet-rfcn)从这个ROI区域中检测得到信号灯的真实坐标。由于ROI相对较小，检测速度比较快。
+
+```
+/// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
+bool TLProcSubnode::ProcEvent(const Event &event) {
+  // get data from sharedata which pulish by Preprocess SubNode
+  ...
+  // verify image_lights from cameras
+  ...
+  // using rectifier to rectify the region.
+  const double before_rectify_ts = TimeUtil::GetCurrentTime();
+  if (!rectifier_->Rectify(*(image_lights->image), rectify_option, (image_lights->lights).get())) {
+    return false;
+  }
+  ...
+}
+```
+
+整流环节输入包含检测使用的摄像头id，映射过后的2D图像坐标系信号灯标定框，摄像头拍摄到的真实路况图像。这些图像都是从共享数据ShareData容器类中获得，而发布这些信息的就是ProProcess SubNode，上小节可以得知。
+
+```
+/// file in apollo/modules/perception/traffic_light/rectify/unity_rectify.cc
+bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std::vector<LightPtr> *lights) {
+  for (auto &light : lights_ref) {
+    cv::Rect cbox;
+    crop_->GetCropBox(ros_image.size(), lights_ref, &cbox);
+    ...
+  }
+}
+
+/// file in apollo/modules/perception/traffic_light/rectify/cropbox.cc
+void CropBox::GetCropBox(const cv::Size &size, const std::vector<LightPtr> &lights, cv::Rect *cropbox) {
+  float center_x = (xr + xl) / 2;
+  float center_y = (yb + yt) / 2;
+  float resize_width = (xr - xl) * crop_scale_;
+  float resize_height = (yb - yt) * crop_scale_;
+  float resize = std::max(resize_width, resize_height);
+  resize_width = resize_height = (resize < min_crop_size_) ? min_crop_size_ : resize;
+  // clamp
+  xl = center_x - resize_width / 2;
+  xl = (xl < 0) ? 0 : xl;
+  yt = center_y - resize_height / 2;
+  yt = (yt < 0) ? 0 : yt;
+  xr = center_x + resize_width / 2;
+  xr = (xr >= cols) ? cols - 1 : xr;
+  yb = center_y + resize_width / 2;
+  yb = (yb >= rows) ? rows - 1 : yb;
+}
+```
+
+从上面代码就可以不难理解Apollo对于每个映射过后的信号灯坐标漂移问题处理方式，最终使用crop_scale扩大标定框得到ROI区域，接下来就是使用检测网络对该区域进行信号灯检测。
+
+```
+/// file in apollo/modules/perception/traffic_light/rectify/unity_rectify.cc
+bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std::vector<LightPtr> *lights) {
+  for (auto &light : lights_ref) {
+  	// CropBox via crop_scale
+  	...
+  	// dection form croped box
+    detect_->SetCropBox(cbox);
+    detect_->Perform(ros_image, &detected_bboxes);
+    for (size_t j = 0; j < detected_bboxes.size(); ++j) {
+      cv::Rect &region = detected_bboxes[j]->region.rectified_roi;
+      float score = detected_bboxes[j]->region.detect_score;
+      region.x += cbox.x;
+      region.y += cbox.y;
+    }
+    // bbox select
+    select_->Select(ros_image, lights_ref, detected_bboxes, &selected_bboxes);
+  }
+}
+```
+
+以上代码清晰的反映了ROI检测的流程，对CropBox产生的ROI--cbox进行网络的检测，得到结果detected_bboxes包含了ROI内所有的信号灯信息，然后对每个信号灯标定框践行筛选，去除落在ROI以外的bbox，然后矫正标定框，加上cbox.x和y映射到整体Image的x和y。最后对所有的bounding boxes进行NMS冗余筛选，去除覆盖较大的次要标定框。另外一些细节问题：
+
+(1) 检测网络使用的是基于ResNet50的RFCN，每张输入的图片经过预处理，最短边保持一致(由crop_min_size控制，默认300)
+
+```
+/// file in apollo/modules/perception/traffic_light/rectify/select.cc
+void GaussianSelect::Select(const cv::Mat &ros_image,
+                            const std::vector<LightPtr> &hdmap_bboxes,
+                            const std::vector<LightPtr> &refined_bboxes,
+                            std::vector<LightPtr> *selected_bboxes) {
+  // find bbox with max area in refined_bboxes
+  auto max_area_refined_bbox =
+      std::max_element(refined_bboxes.begin(), refined_bboxes.end(),
+                       [](const LightPtr lhs, const LightPtr rhs) {
+                         return lhs->region.rectified_roi.area() <
+                                rhs->region.rectified_roi.area();
+                       });
+
+  //  cv::Mat_<int> cost_matrix(hdmap_bboxes.size(), refined_bboxes.size());
+  std::vector<std::vector<double> > score_matrix( hdmap_bboxes.size(), std::vector<double>(refined_bboxes.size(), 0));
+  for (size_t row = 0; row < hdmap_bboxes.size(); ++row) {
+    cv::Point2f center_hd = GetCenter(hdmap_bboxes[row]->region.rectified_roi);
+    auto width_hd = hdmap_bboxes[row]->region.rectified_roi.width;
+    for (size_t col = 0; col < refined_bboxes.size(); ++col) {
+      cv::Point2f center_refine = GetCenter(refined_bboxes[col]->region.rectified_roi);
+      auto width_refine = refined_bboxes[col]->region.rectified_roi.width;
+
+      // use gaussian score as metrics of distance and width
+      // distance_score:
+      //    larger distance => 0.
+      //    smaller distance => 1
+      double distance_score = static_cast<double>(Get2dGaussianScore(center_hd, center_refine, 100, 100));
+      // width score:
+      //   larger width diff => 0
+      //   smaller width diff => 1
+      double width_score = static_cast<double>(Get1dGaussianScore(width_hd, width_refine, 100));
+
+      // normalized area score
+      // larger area => 1
+      double area_score = 1.0 * refined_bboxes[col]->region.rectified_roi.area() / (*max_area_refined_bbox)->region.rectified_roi.area();
+
+      // when numerator=1， denominator is very small,
+      // converting to int might reduce to same value, here uses 1000
+      // + 0.05 to prevent score = 0
+      // score * weight h
+      score_matrix[row][col] = (0.05 + 0.4 * refined_bboxes[col]->region.detect_score +  0.2 * distance_score + 0.2 * width_score + 0.2 * area_score);
+    }
+  }
+```
+
+(2) Select函数是标定框选择函数。由映射坐标经过wrap，crop得到的ROI可能包含多个信号灯情况，而实际上每个映射坐标只对应ROI中的某一个bbox，如何进行匹配？在代码中可以看到匹配方法。hdmap给出了m个映射bbox，实际RFCN检测到了n个bbox，那么可以构建一个mxn的矩阵，矩阵中每个元素代表两两相似度评估。评估标准是：hdmap_bbox和detect_bbox中心和宽度距离信息、detect_bbox检测评分score、面积信息。Get2dGaussianScore和Get1dGaussianScore是标准的二维/一维高斯函数。
+
+- hdmap_bbox和detect_bbox中心和宽度月相近，评分越大，占比0.2, 0.2
+- detect_bbox的RFCN检测评分score越大，评分越大，占比0.4
+- detect_bbox面积越大，评分越大，占比0.2
 
 [返回目录](#目录头)
