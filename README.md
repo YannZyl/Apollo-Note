@@ -1289,7 +1289,7 @@ bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std:
 
 以上代码清晰的反映了ROI检测的流程，对CropBox产生的ROI--cbox进行网络的检测，得到结果detected_bboxes包含了ROI内所有的信号灯信息，然后对每个信号灯标定框践行筛选，去除落在ROI以外的bbox，然后矫正标定框，加上cbox.x和y映射到整体Image的x和y。最后对所有的hdmap_bboxes和detect_boxes进行匹配，得到整流过后的标定框。另外一些细节问题：
 
-(1) 检测网络使用的是基于ResNet50的RFCN，每张输入的图片经过预处理，最短边保持一致(由crop_min_size控制，默认300)
+- 检测网络使用的是基于ResNet50的RFCN，每张输入的图片经过预处理，最短边保持一致(由crop_min_size控制，默认300)
 
 ```
 /// file in apollo/modules/perception/traffic_light/rectify/select.cc
@@ -1337,12 +1337,12 @@ void GaussianSelect::Select(const cv::Mat &ros_image,
   }
 ```
 
-(2) Select函数是hdmap_bbox与detect_bbox标定框选择与匹配函数。由映射坐标经过wrap，crop得到的ROI可能包含多个信号灯情况，而实际上每个映射坐标只对应ROI中的某一个bbox，如何进行匹配？在代码中可以看到匹配方法。hdmap给出了m个映射bbox，实际RFCN检测到了n个bbox，那么可以构建一个mxn的矩阵，矩阵中每个元素代表两两相似度评估。评估标准是：hdmap_bbox和detect_bbox中心和宽度距离信息、detect_bbox检测评分score、面积信息。Get2dGaussianScore和Get1dGaussianScore是标准的二维/一维高斯函数。
+- Select函数是hdmap_bbox与detect_bbox标定框选择与匹配函数。由映射坐标经过wrap，crop得到的ROI可能包含多个信号灯情况，而实际上每个映射坐标只对应ROI中的某一个bbox，如何进行匹配？在代码中可以看到匹配方法。hdmap给出了m个映射bbox，实际RFCN检测到了n个bbox，那么可以构建一个mxn的矩阵，矩阵中每个元素代表两两相似度评估。评估标准是：hdmap_bbox和detect_bbox中心和宽度距离信息、detect_bbox检测评分score、面积信息。Get2dGaussianScore和Get1dGaussianScore是标准的二维/一维高斯函数。
 
-- hdmap_bbox和detect_bbox中心和宽度月相近，评分越大，占比0.2, 0.2
-- detect_bbox的RFCN检测评分score越大，评分越大，占比0.4
-- detect_bbox面积越大，评分越大，占比0.2
+	- hdmap_bbox和detect_bbox中心和宽度月相近，评分越大，占比0.2, 0.2
+	- detect_bbox的RFCN检测评分score越大，评分越大，占比0.4
+	- detect_bbox面积越大，评分越大，占比0.2
 
-(3) 当然还有一种情况，如果dectect_bbox在实际检测过程中没有检测到任何的信号灯，则就把该信号灯状态直接置为unknown，跳过后续的recognizer和reviser阶段，因为没必要再检测。
+- 当然还有一种情况，如果dectect_bbox在实际检测过程中没有检测到任何的信号灯，则就把该信号灯状态直接置为unknown，跳过后续的recognizer和reviser阶段，因为没必要再检测。
 
 [返回目录](#目录头)
