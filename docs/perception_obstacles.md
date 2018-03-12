@@ -57,13 +57,13 @@ SensorObject继承了Object类，主要数据结构如下：
 | Eigen::Matrix4d sensor2world_pose | 感知设备自身坐标系相对世界坐标系的系数矩阵 |
 | LaneObjectsPtr lane_objects | 车道线信息 |
 
-从上面两张表格基本可以看出激光雷达模块需要做的工作，Object类主要是很完善地存储了单个物体的一些静态与动态信息，静态信息包括物体点云数据，凸包及标定框信息，坐标系坐标/偏向/尺寸信息，物体的类别信息等；动态信息主要是在跟踪过程中物体速度，中心变化等信息。而在一次激光雷达扫描过程中，得到的信息中包含了多类物体，因此SensorObject类中存储了Object的一个向量，刻画了本次扫描分离的物体集合，同时包含了一些标记信息如感知来源、设备id、时间戳、序列等，最后还包含了本次激光雷达扫描到的车道线信息。SensorObject类包含了每次激光雷达扫描得到的所有信息。
+从上面两张表格基本可以看出激光雷达模块需要做的工作，Object类很完善地存储了单个物体的一些静态与动态信息，静态信息包括物体点云数据，凸包及标定框信息，坐标系坐标/偏向/尺寸信息，物体的类别信息等；动态信息主要是在跟踪过程中物体速度，中心变化等信息。而在一次激光雷达扫描过程中，得到的信息中包含了多类物体，因此SensorObject类中存储了Object的一个向量，刻画了本次扫描分离的物体集合，同时包含了一些标记信息如感知来源、设备id、时间戳、序列等，最后还包含了本次激光雷达扫描到的车道线信息。SensorObject类包含了每次激光雷达扫描得到的所有信息。
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_lidar.png)
 
 上图展示了激光雷达处理的4个模块，分别为高精地图ROI过滤器、基于卷积神经网络的障碍物分割、MinBox 障碍物边框构建与HM对象跟踪。接下去将一层层解剖代码，分析各个模块的流程的方法。
 
-#### <a name="高精地图ROI过滤">高精地图ROI过滤<器/a>
+#### <a name="高精地图ROI过滤">高精地图ROI过滤器</a>
 
 高精地图ROI过滤器是回调的第一个过程，从最开始的模块框架图可以看到，LidarProcessSubnode子节点接受的输入数据类型是ROS原始的点云数据类型，sensor_msgs::PointCloud2，简单地看一下这个数据结构，也可以参考官方文档[PointCloud2](http://docs.ros.org/api/sensor_msgs/html/msg/PointCloud2.html)
 
@@ -90,4 +90,46 @@ sensor_msgs::PointCloud2与第一个版本sensor_msgs::PointCloud有一些区别
 
 还有一个细节，激光雷达获取的点云是ROS原始的sensor_msgs::PointClouds类型，而实际处理过程中使用的更多的是PCL库的pcl::PointCloud<T>类型，需要在代码中做一个转换，使用pcl_conversions的pcl::fromROSMsg和pcl::toROSMsg函数即可方便的实现相互转换。
 
-障碍无感知
+(1) 数据转换与存储
+
+在进行高精地图ROI过滤的过程中，第一步是接收来自激光雷达的原始点云数据，设备id，时间戳ts等信息，并将其信息存入上述的SensorObject类中。存储过程中代码中值得关注的两个点分别是传感器到世界坐标系的转换矩阵velodyne_trans以及sensor_msgs::PointCloud2到PCL::PointCloud的转换。
+
+```
+/// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
+void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
+  ...
+  /// get velodyne2world transfrom
+  std::shared_ptr<Matrix4d> velodyne_trans = std::make_shared<Matrix4d>();
+  if (!GetVelodyneTrans(kTimeStamp, velodyne_trans.get())) {
+    ...
+  }
+  out_sensor_objects->sensor2world_pose = *velodyne_trans;
+
+  PointCloudPtr point_cloud(new PointCloud);
+  TransPointCloudToPCL(message, &point_cloud);
+}
+```
+
+(2) ROI生成
+
+当获得原始的点云数据并转换成PCL格式以后，下一步需要从点云中检索ROI区域，这些ROI区域包含路面与路口的驾驶区域。
+
+```
+/// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
+void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
+  /// get velodyne2world transfrom
+  ...
+  /// call hdmap to get ROI
+  HdmapStructPtr hdmap = nullptr;
+  if (hdmap_input_) {
+    PointD velodyne_pose = {0.0, 0.0, 0.0, 0};  // (0,0,0)
+    Affine3d temp_trans(*velodyne_trans);
+    PointD velodyne_pose_world = pcl::transformPoint(velodyne_pose, temp_trans);
+    hdmap.reset(new HdmapStruct);
+    hdmap_input_->GetROI(velodyne_pose_world, FLAGS_map_radius, &hdmap);
+    PERF_BLOCK_END("lidar_get_roi_from_hdmap");
+  }
+}
+```
+
+路面与路口的驾驶区域需要查询高精地图来完成，该阶段首先使用tf进行坐标系的转换，配合velodyne_pose计算得到velodyne_pose_world世界坐标系坐标。真正获取ROI使用的是GetROI函数。

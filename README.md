@@ -33,6 +33,8 @@ Links:
 - [感知模块: 代码层次结构](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception_software_arch.md)
 - [感知模块: 障碍物感知3D Obstacles Perception](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception_obstacles.md)(待完善)
 - [感知模块: 信号灯感知Traffic Light Perception](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception_traffic_lights.md)
+- 高精地图模块(待完善)
+- Apollo坐标系研究(待完善)
 
 Refs：
 
