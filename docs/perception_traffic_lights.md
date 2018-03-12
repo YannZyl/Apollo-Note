@@ -613,6 +613,6 @@ bool ColorReviser::Revise(const ReviseOption &option, std::vector<LightPtr> *lig
 
 具体的校验规则很简单：
 
-- 如果检测到的是BLACK或者UNKNOWN，查询缓存，缓存中由上时刻该信号灯(id必须一致)信息，并且两个时间差小与一个阈值(由blink_time_控制，默认)，则使用缓存中的状态作为当前信号灯状态。
+- 如果检测到的是BLACK或者UNKNOWN，查询缓存，缓存中由上时刻该信号灯(id必须一致)信息，并且两个时间差小与一个阈值(由blink_time_控制，默认1.5s)，则使用缓存中的状态作为当前信号灯状态。
 - 如果检测到是YELLOW，查看缓存，如果缓存中上时刻状态是RED，那么刷新变成RED；否则保留YELLOW状态
 - 如果是RED或者GREEN，则刷新缓存，缓存中对应id的信号灯状态修改为当前状态。当然如果缓存时间过长，那么已经过掉路口了，对应的信号灯就没意义了，这时候可以清楚缓存，重新保存。

@@ -13,7 +13,7 @@
 	- 高清地图模块: HD-Map
 	- 定位模块: Localization
 - 感知模块笔记
-	- 代码层次结构图
+	- 代码层次结构
 		- Topic注册管理器初始化
 		- ShareData共享数据类初始化
 		- SubNode子节点类初始化
@@ -36,5 +36,5 @@ Links:
 
 Refs：
 
-- 补充: 相机标定(待完善)
-- 补充: ROS tf坐标系转换(待完善)
+- 补充: 相机标定 Camera Calibration(待完善)
+- 补充: ROS::tf坐标系转换(待完善)
