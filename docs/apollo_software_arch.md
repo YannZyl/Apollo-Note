@@ -15,7 +15,7 @@
 - 障碍物检测(3D obstacles perception).
 - 交通信号灯检测(Traffic light perception).
 
-感知模块输入来源于汽车物理感知设备，主要包含激光雷达点云数据，视觉摄像头数据。同时，交通信号灯检测也依赖于其他模块提供的数据，包含定位模块数据，高清地图数据(信号灯实时检测是不可行的或者说是不合理不必要的，原因在于太过耗费计算资源，实际只需要定位与高精度地图模块提供相应的位置信息，指示感知模块在什么时间段与路面段做信号灯检测)，E.g.路口需要启动信号灯检测，中间路段只需要障碍物检测，不存在信号灯。
+感知模块输入来源于汽车物理感知设备，主要包含激光雷达点云数据，视觉摄像头数据。同时，交通信号灯检测也依赖于其他模块提供的数据，包含定位模块数据，高精地图数据(信号灯实时检测是不可行的或者说是不合理不必要的，原因在于太过耗费计算资源，实际只需要定位与高精度地图模块提供相应的位置信息，指示感知模块在什么时间段与路面段做信号灯检测)，E.g.路口需要启动信号灯检测，中间路段只需要障碍物检测，不存在信号灯。
 
 (1) 感知模块输入数据
 
@@ -23,7 +23,7 @@
 - Radar data/雷达数据 (ROS topic /apollo/sensor/conti_radar)
 - Image data/图像数据 (ROS topic /apollo/sensor/camera/traffic/image_long & /apollo/sensor/camera/traffic/image_short)
 - Coordinate frame transformation information over time/坐标系转换数据 (ROS topic /tf)
-- HDMap/高清地图
+- HDMap/高精地图
 - Extrinsic parameters of LiDAR sensor calibration/激光雷达传感器矫正外参 (ROS topic /tf_static)
 - Extrinsic parameters of radar sensor calibration/雷达传感器矫正外参 (来自外部YAML文件)
 - Extrinsic and Intrinsic parameters of all camera calibration/所有相机/长焦+短焦相机的内参和外参 (来自外部YAML文件)
@@ -98,7 +98,7 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 	- Localization/定位信息
 	- Perception/感知模块信息 traffic light
 	- Prediction/预测模块信息
-	- HD Map/高清地图信息
+	- HD Map/高精地图信息
 	- Routing/路由导航信息
 
 (2) 规划模块输出数据
@@ -133,9 +133,9 @@ Predictor最终生成障碍物的预测轨迹，目前支持的预测器有：
 - Chassis status/机箱状态
 - Chassis detail status/机箱具体状态
 
-## <a name="高清地图模块">高清地图模块: HD Map</a>
+## <a name="高精地图模块">高精地图模块: HD Map</a>
 
-高清地图模块类似于一个库，不像其他模块使用发布与订阅机制，他频繁的被调用用来检索相关道路的结构信息。
+高精地图模块类似于一个库，不像其他模块使用发布与订阅机制，他频繁的被调用用来检索相关道路的结构信息。
 
 ## <a name="定位模块">定位模块: Localization</a>
 

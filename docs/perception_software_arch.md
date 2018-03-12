@@ -325,10 +325,10 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析TLPreprocessorSu
 
 | 名称 | 返回 | 备注 |
 | ---- | ---- | ---- |
-| InitInternal() | bool | 内部初始化函数，初始化边界映射函数，共享数据，信号灯预处理器，高清地图等。 |
+| InitInternal() | bool | 内部初始化函数，初始化边界映射函数，共享数据，信号灯预处理器，高精地图等。 |
 | InitSharedData() | bool | 初始化共享数据类TLPreprocessingData，在InitInternal函数中被调用 |
 | InitPreprocessor() | bool | 初始化预处理器(实际做预处理工作类)，在InitInternal函数中被调用 |
-| InitHdmap() | bool | 初始化高清地图类，在InitInternal函数中被调用 |
+| InitHdmap() | bool | 初始化高精地图类，在InitInternal函数中被调用 |
 | AddDataAndPublishEvent(const std::shared_ptr<ImageLights> &data,const CameraId &camera_id, double timestamp) | bool | 将数据存储进共享数据实例的map中，并交由EventManager发布消息信息，在SubCameraImage函数中被调用 |
 | SubLongFocusCamera(const sensor_msgs::Image &msg) | void | 选择长焦摄像头回调函数，在InitInternal函数中被调用注册回调函数 |
 | SubShortFocusCamera(const sensor_msgs::Image &msg) | void | 选择短焦摄像头回调函数，在InitInternal函数中被调用注册回调函数 |
@@ -339,7 +339,7 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析TLPreprocessorSu
 | GetCarPose(const double ts, CarPose \*pose) | bool | 获取汽车姿态信息，在GetSignals函数被调用 |
 | TLPreprocessor preprocessor_ | -- | 预处理器 |
 | TLPreprocessingData \*preprocessing_data_ | -- | 预处理共享数据容器类指针 |
-| HDMapInput \*hd_map_ | -- | 高清地图类指针 |
+| HDMapInput \*hd_map_ | -- | 高精地图类指针 |
 | last_signals_ts_  | -- | 上一次调用GetSignals的时间戳，若相隔太短，直接用上次的信息 |
 | std::vector<apollo::hdmap::Signal> last_signals_ | -- | 上一次的信息 |
 | last_query_tf_ts_ | -- | 上一次调用CameraSelection时间戳，若相隔太短，则直接调用该步骤，同时跳过GetSignals和CacheLightsProjections |
