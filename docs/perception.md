@@ -2,42 +2,42 @@
 
 本文档从代码层次结构去详细了解与入门Apollo Perception感知模块，主要描述了感知模块的运行流程以及数据结构。
 
-- [1. Apollo 2.0 软件结构简介](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md)
-  - 1.1 软件结构图
-  - 1.2 感知模块: Perception
-  - 1.3 预测模块: Prediction
-  - 1.4 路由模块: Routing
-  - 1.5 规划模块: Planning
-  - 1.6 控制模块: Control
-  - 1.7 控制区域网络模块: CanBus
-  - 1.8 高清地图模块: HD-Map
-  - 1.9 定位模块: Localization
-- [2. 感知模块笔记](#感知模块详解)
-  - [2.1 代码层次结构图](#代码层次结构)
-    - [2.1.1 Topic注册管理器初始化](#注册管理器初始化)
-    - [2.1.2 ShareData共享数据类初始化](#共享数据类初始化)
-    - [2.1.3 SubNode子节点类初始化](#子节点类初始化)
-    - [2.1.4 DAG有向图初始化](#有向图初始化)
-    - [2.1.5 DAG整体运行实现感知](#DAG运行)
-  - 2.2 障碍物感知: 3D Obstacles Perception
-    - 2.2.1 激光测距仪障碍物感知: LiDAR Obstacle Perception
-    - 2.2.2 雷达障碍物感知: RADAR Obstacle Perception
-    - 2.2.3 障碍物结果融合: Result Fusion
-  - 2.3 信号灯感知: Traffic Light Perception
-    - 2.3.1 信号灯预处理: Traffic Light Preprocess
-    - 2.3.2 信号灯处理: Traffic Light Process
+- [Apollo 2.0 软件结构简介](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md)
+  - 软件结构图
+  - 感知模块: Perception
+  - 预测模块: Prediction
+  - 路由模块: Routing
+  - 规划模块: Planning
+  - 控制模块: Control
+  - 控制区域网络模块: CanBus
+  - 高清地图模块: HD-Map
+  - 定位模块: Localization
+- [感知模块笔记](#感知模块详解)
+  - [代码层次结构图](#代码层次结构)
+    - [Topic注册管理器初始化](#注册管理器初始化)
+    - [ShareData共享数据类初始化](#共享数据类初始化)
+    - [SubNode子节点类初始化](#子节点类初始化)
+    - [DAG有向图初始化](#有向图初始化)
+    - [DAG整体运行实现感知](#DAG运行)
+  - 障碍物感知: 3D Obstacles Perception
+    - 激光测距仪障碍物感知: LiDAR Obstacle Perception
+    - 雷达障碍物感知: RADAR Obstacle Perception
+    - 障碍物结果融合: Result Fusion
+  - 信号灯感知: Traffic Light Perception
+    - 信号灯预处理: Traffic Light Preprocess
+    - 信号灯处理: Traffic Light Process
 
-## <a name="感知模块详解">2. 感知模块笔记</a>
+## <a name="感知模块详解">感知模块笔记</a>
 
 本章节主要详细的解析Apollo 2.0感知模块Perception代码与功能结构，相关资料请参考([Perception: 3D Obstacles](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/3d_obstacle_perception.md)和[Percepton: Traffic Light](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/traffic_light.md))
 
-### <a name="代码层次结构">2.1 代码层次结构图</a>
+### <a name="代码层次结构">代码层次结构图</a>
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_software_arch.png)
 
 感知模块框架本质是一个DAG有向图，该图由3类基本元素组成，包括：子节点Sub Node，边Edge和共享数据Share Data。框架中的每一个功能都以子节点SubNode的形式存在，以线程形式运行；子节点之间的共享数据ShareData沿着边Edge有向流动，从产生子节点流向需求子节点。上图中第二行分别初始化共享数据，子节点以及DAG，最终DAG运行执行感知功能。
 
-#### <a name="注册管理器初始化">2.1.1 Topic注册管理器初始化</a>
+#### <a name="注册管理器初始化">Topic注册管理器初始化</a>
 
 Topic注册与管理器初始化主要是为Apollo各个模块之间节点通信创建所需要订阅与发布的topic。前提是节点使用的是ROS消息发布与订阅机制(下文将提到)，这些节点会接受各类数据，然后处理数据，最终将数据发布出去给需要用到的另一些节点。总而言之，这类节点有输入或者输出。节点输入意味着需要订阅某些topic，而节点输出代表节点需要发布某些topic，这样就可以完成节点之间的通信。
 
@@ -171,7 +171,7 @@ Apollo中所有的topic有：
 
 从代码段不难看出，调用一次REGISTER_ADAPTER(name)就会生成该topic的订阅与发布数据成员，以及对应的发布函数，Callback添加函数，如果某个节点需要订阅该topic(即输入是该topic发布的信息)，则只需要使用Add\*Callback把节点的处理函数加入即可自动调用。
 
-#### <a name="共享数据类初始化">2.1.2 ShareData共享数据类初始化</a>
+#### <a name="共享数据类初始化">ShareData共享数据类初始化</a>
 
 对比上述的ROS消息订阅与发布机制，另一类消息传递机制是依赖手工管理收发消息(下文将提到)。共享数据是针对这类机制设定的，某些节点需要的输入数据保存到共享信息中，节点需要自己调用函数去提取共享数据完成处理。共享数据类初始化主要是创建各个共享数据结构的模板类，在后续DAG初始化工程中调用这些类可以真正实例化共享数据类。
 
@@ -282,7 +282,7 @@ BaseClassMap &GlobalFactoryMap();
 
 总结可知REGISTER_SHAREDDATA宏实际是创建共享数据容器类实例化与保存函数，通过调用该宏生成的函数可以方便的实例化对应的容易类并添加至全局工厂管理类，方便管理所有共享数据实例。E.g. 当在perception.cc的RegistAllOnboardClass中调用RegisterFactoryLidarObjectData()时，实际是实例化对应的容器类LidarObjectData，最终存储进GlobalFactoryMap中，存储的形式为：GlobalFactory[SharedData][LidarObjectData]两级存储。
 
-#### <a name="子节点类初始化">2.1.3 SubNode子节点类初始化</a>
+#### <a name="子节点类初始化">SubNode子节点类初始化</a>
 
 子节点SubNode类初始化与共享数据类初始化相同，主要是创建各个子节点的模板类，在后续DAG初始化工程中调用这些类可以真正实例化子节点类。
 
@@ -376,7 +376,7 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析TLPreprocessorSu
 
 从TLPreprocessorSubnode成员函数可以看到，子节点类主要为ROS消息发布与订阅机制(或者是定时触发机制)完善回调函数，在回调函数中执行相应的功能，5类子节点都具有相同的类形式，但功能不同。具体的功能在下小节描述。
 
-#### <a name="有向图初始化">2.1.4 DAG有向图初始化</a>
+#### <a name="有向图初始化">DAG有向图初始化</a>
 
 DAG初始化过程主要是构建子节点SubNode，边Edge和共享数据ShareData的一个有向图，并全部实例化得到对应的类对象，关于有向图的三部分内容，程序从config文件读入
 
@@ -562,7 +562,7 @@ bool SharedDataManager::Init(const DAGConfig::SharedDataConfig &data_config) {
 }
 ```
 
-#### <a name="DAG运行">2.1.5 DAG整体运行实行感知</a>
+#### <a name="DAG运行">DAG整体运行实行感知</a>
 
 当DAG完成子节点SubNode，边Edge以及共享数据ShareData的单例对象初始化时，下一步就是启动各个节点的多线程进行工作。运行DAG的过程如下
 

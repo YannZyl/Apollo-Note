@@ -2,32 +2,32 @@
 
 本文档结合代码详细地解释感知模块中交通信号灯感知的流程与功能。
 
-- 1. Apollo 2.0 软件结构简介
-	- 1.1 软件结构图
-	- 1.2 感知模块: Perception
-	- 1.3 预测模块: Prediction
-	- 1.4 路由模块: Routing
-	- 1.5 规划模块: Planning
-	- 1.6 控制模块: Control
-	- 1.7 控制区域网络模块: CanBus
-	- 1.8 高清地图模块: HD-Map
-	- 1.9 定位模块: Localization
-- 2. 感知模块笔记
-	- 2.1 代码层次结构图
-		- 2.1.1 Topic注册管理器初始化
-		- 2.1.2 ShareData共享数据类初始化
-		- 2.1.3 SubNode子节点类初始化
-		- 2.1.4 DAG有向图初始化
-		- 2.1.5 DAG整体运行实现感知
-	- 2.2 障碍物感知: 3D Obstacles Perception
-		- 2.2.1 激光测距仪障碍物感知: LiDAR Obstacle Perception
-		- 2.2.2 雷达障碍物感知: RADAR Obstacle Perception
-		- 2.2.3 障碍物结果融合: Result Fusion
+- Apollo 2.0 软件结构简介
+	- 软件结构图
+	- 感知模块: Perception
+	- 预测模块: Prediction
+	- 路由模块: Routing
+	- 规划模块: Planning
+	- 控制模块: Control
+	- 控制区域网络模块: CanBus
+	- 高清地图模块: HD-Map
+	- 定位模块: Localization
+- 感知模块笔记
+	- 代码层次结构图
+		- Topic注册管理器初始化
+		- ShareData共享数据类初始化
+		- SubNode子节点类初始化
+		- DAG有向图初始化
+		- DAG整体运行实现感知
+	- 障碍物感知: 3D Obstacles Perception
+		- 激光测距仪障碍物感知: LiDAR Obstacle Perception
+		- 雷达障碍物感知: RADAR Obstacle Perception
+		- 障碍物结果融合: Result Fusion
 	- [2.3 信号灯感知: Traffic Light Perception](#信号灯感知)
 		- [2.3.1 信号灯预处理: Traffic Light Preprocess](#信号灯预处理)
 		- [2.3.2 信号灯处理: Traffic Light Process](#信号灯处理)
 
-### <a name="信号灯感知">2.3 信号灯感知: Traffic Light Perception</a>
+## <a name="信号灯感知">信号灯感知: Traffic Light Perception</a>
 
 交通信号灯模块主要是提供精确的信号灯识别，通常信号灯有三种状态：
 
@@ -73,7 +73,7 @@
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/framework_traffic_lights.png)
 
-#### <a name="信号灯预处理">2.3.1 信号灯预处理: Traffice Light Preprocess</a>
+### <a name="信号灯预处理">信号灯预处理: Traffice Light Preprocess</a>
 
 预处理阶段主要的工作是为信号灯处理阶段Traffic Light Process选择合适的相机。针对每个路况下车辆的定位与姿态，查询高清地图HD Map得到该路况下的信号灯情况(是否存在，存在的话位置多少)，然后将3D世界坐标系下的信号灯坐标分别投影到长焦和广角摄像头下的2D图像坐标系。接着根据投影过后新的信号灯是否全部暴露在摄像头下，来选择合适的摄像头。最终将摄像头id，采集到的真实路况图像，投影过后信号灯等信息发布给Process进行信号灯的状态识别。
 
@@ -379,7 +379,7 @@ bool TLPreprocessorSubnode::AddDataAndPublishEvent(
 
 代码显示信息发布过程是人为的写入共享数据类队列中TLPreprocessingData，而event_manager做信息记录。
 
-#### <a name="信号灯处理">2.3.2 信号灯处理: Traffic Light Process</a>
+### <a name="信号灯处理">信号灯处理: Traffic Light Process</a>
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_process.png)
 
