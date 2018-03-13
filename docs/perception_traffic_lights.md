@@ -77,10 +77,10 @@ boundary {
 
 相机选择阶段输入通过ROS topic订阅得到，包括：
 
-	- 长焦相机topic：/apollo/sensor/camera/traffic/image_long
-	- 广角相机topic：/apollo/sensor/camera/traffic/image_short
-	- 定位信息topic，/tf
-	- 高精地图查询API
+- 长焦相机topic：/apollo/sensor/camera/traffic/image_long
+- 广角相机topic：/apollo/sensor/camera/traffic/image_short
+- 定位信息topic，/tf
+- 高精地图查询API
 
 分析信号灯预处理子节点的回调函数，两个函数对别对应长焦与广角相机的图像预处理：
 

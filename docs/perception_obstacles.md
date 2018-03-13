@@ -32,9 +32,9 @@
 | 名称 | 备注 |
 | ---- | ---- |
 | pcl_util::PointCloudPtr cloud | PCL点云数据，原始sensor_msgs::PointCloud2需经过转化 |
-| PolygonDType polygon | 物体凸包，PolygonDType数据类型为pcl_util::PointCloud |
+| PolygonDType polygon | 物体凸包/角点，PolygonDType数据类型为pcl_util::PointCloud |
 | Eigen::Vector3d direction | 物体主方向，右手坐标系，默认X轴方向，即Eigen::Vector3d(1, 0, 0) |
-| double theta | 物体偏向，默认0.0，即无偏向，向正前方 |
+| double theta | 物体偏航角，默认0.0，即无偏向，向正前方 |
 | Eigen::Vector3d center | 物体中心，默认自身坐标系中心，即Eigen::Vector3d::Zero() |
 | double length, width, height | 物体有向标定框尺寸，length为朝向主方向轴的大小 |
 | std::vector<float> shape_features | 形状特征，用于物体跟踪 |
@@ -118,7 +118,9 @@ void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) 
 /// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
 void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
   /// get velodyne2world transfrom
-  ...
+  if (!GetVelodyneTrans(kTimeStamp, velodyne_trans.get())) {
+  	...
+  }
   /// call hdmap to get ROI
   HdmapStructPtr hdmap = nullptr;
   if (hdmap_input_) {
@@ -132,4 +134,45 @@ void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) 
 }
 ```
 
-路面与路口的驾驶区域需要查询高精地图来完成，该阶段首先使用tf进行坐标系的转换，配合velodyne_pose计算得到velodyne_pose_world世界坐标系坐标。真正获取ROI使用的是GetROI函数。
+路面与路口的驾驶区域需要查询高精地图来完成，该阶段首先使用tf进行坐标系的转换(车辆/局部坐标系到世界坐标系的变换矩阵)，配合velodyne_pose计算得到velodyne_pose_world世界坐标系坐标，坐标系具体情况请参考[Apollo坐标系研究](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_coordinate.md)。真正获取ROI使用的是GetROI函数。具体的路口，车道存储形式请参考[高精地图模块](https://github.com/YannZyl/Apollo-Note/blob/master/docs/hdmap.md)
+
+这个分析分析一下比较GetVelodyneTrans函数，这个函数的实现过程我们可以先简要的看一下在做功能分析：
+
+```
+/// file in apollo/modules/perception/onboard/transform_input.cc
+bool GetVelodyneTrans(const double query_time, Eigen::Matrix4d* trans) {
+  ...
+  // Step1: lidar refer to novatel(GPS/IMU)
+  if (!tf2_buffer.canTransform(FLAGS_lidar_tf2_frame_id, FLAGS_lidar_tf2_child_frame_id, query_stamp, ...) {
+  	...
+  }
+  geometry_msgs::TransformStamped transform_stamped;
+  try {
+    transform_stamped = tf2_buffer.lookupTransform(FLAGS_lidar_tf2_frame_id, FLAGS_lidar_tf2_child_frame_id, query_stamp);
+  } 
+  Eigen::Affine3d affine_lidar_3d;
+  tf::transformMsgToEigen(transform_stamped.transform, affine_lidar_3d);
+  Eigen::Matrix4d lidar2novatel_trans = affine_lidar_3d.matrix();
+
+  // Step2 notavel(GPS/IMU) refer to world coordinate system
+  if (!tf2_buffer.canTransform(FLAGS_localization_tf2_frame_id, FLAGS_localization_tf2_child_frame_id, ...) {
+    ...
+  }
+  try {
+    transform_stamped = tf2_buffer.lookupTransform(FLAGS_localization_tf2_frame_id, FLAGS_localization_tf2_child_frame_id, query_stamp);
+  } 
+  Eigen::Affine3d affine_localization_3d;
+  tf::transformMsgToEigen(transform_stamped.transform, affine_localization_3d);
+  Eigen::Matrix4d novatel2world_trans = affine_localization_3d.matrix();
+
+  *trans = novatel2world_trans * lidar2novatel_trans;
+}
+```
+
+从上述的代码中我们明显可以看到有两部分相似度很高的代码组成，第一部分是计算仿射变换矩阵lidar2novatel_trans，这个矩阵的计算通过ROS的tf模块调用lookupTransform函数完成。这部分的仿射变换矩阵是计算激光摄像头到GPS接收器相对于车辆坐标系的变换；第二部分是计算GPS接收器相对于世界坐标系的仿射变换矩阵。最后矩阵相乘得到车辆坐标系激光雷达到世界坐标系的仿射变换矩阵。
+
+(3) 高精地图ROI过滤器
+
+高精地图 ROI 过滤器（往下简称“过滤器”）处理在ROI之外的激光雷达点，去除背景对象，如路边建筑物和树木等，剩余的点云留待后续处理。该过程共有三个子过程。
+
+- 坐标变换。由激光雷达测量得到的原始点云是基于局部坐标系的，而到经过高精地图处理得到路面和路口的ROI是世界坐标系的，所以需要经过一个坐标系转换，仿射变换矩阵就是上述的velodyne_trans。

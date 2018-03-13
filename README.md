@@ -35,9 +35,10 @@ Links:
 - [感知模块: 信号灯感知Traffic Light Perception](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception_traffic_lights.md)
 - 高精地图模块(待完善)
 - Apollo坐标系研究(待完善)
+- Apollo代码宏介绍(待完善)
 
-Refs：
+Supplements：
 
-- 补充: 相机标定 Camera Calibration(待完善)
-- 补充: ROS::tf坐标PointCloud系转换(待完善)
-- 补充: PointCloud点云介绍(待完善)
+- 相机标定 Camera Calibration(待完善)
+- ROS::tf坐标PointCloud系转换(待完善)
+- PointCloud点云介绍(待完善)
