@@ -90,7 +90,7 @@ sensor_msgs::PointCloud2与第一个版本sensor_msgs::PointCloud有一些区别
 
 还有一个细节，激光雷达获取的点云是ROS原始的sensor_msgs::PointClouds类型，而实际处理过程中使用的更多的是PCL库的pcl::PointCloud<T>类型，需要在代码中做一个转换，使用pcl_conversions的pcl::fromROSMsg和pcl::toROSMsg函数即可方便的实现相互转换。
 
-(1) 数据转换与存储
+(1) 数据转换与ROI生成
 
 在进行高精地图ROI过滤的过程中，第一步是接收来自激光雷达的原始点云数据，设备id，时间戳ts等信息，并将其信息存入上述的SensorObject类中。存储过程中代码中值得关注的两个点分别是传感器到世界坐标系的转换矩阵velodyne_trans以及sensor_msgs::PointCloud2到PCL::PointCloud的转换。
 
@@ -109,8 +109,6 @@ void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) 
   TransPointCloudToPCL(message, &point_cloud);
 }
 ```
-
-(2) ROI生成
 
 当获得原始的点云数据并转换成PCL格式以后，下一步需要从点云中检索ROI区域，这些ROI区域包含路面与路口的驾驶区域。
 
@@ -191,13 +189,13 @@ header:
 
 - 计算仿射变换矩阵lidar2world_trans，最终两个矩阵相乘得到激光雷达lidar坐标系到世界坐标系的变换矩阵。
 
-(3) 高精地图ROI过滤器
+(2) 高精地图ROI过滤器
 
 高精地图 ROI 过滤器（往下简称“过滤器”）处理在ROI之外的激光雷达点，去除背景对象，如路边建筑物和树木等，剩余的点云留待后续处理。该过程共有三个子过程。
 
-- 坐标变换。
+- 坐标变换
 
->Apollo官方文档：对于(高精地图ROI)过滤器来说，高精地图数据接口被定义为一系列多边形集合，每个集合由世界坐标系点组成有序点集。高精地图ROI点查询需要点云和多边形处在相同的坐标系，为此，Apollo将输入点云和HDMap多边形变换为来自激光雷达传感器位置的地方坐标系。
+>Apollo官方文档引用：对于(高精地图ROI)过滤器来说，高精地图数据接口被定义为一系列多边形集合，每个集合由世界坐标系点组成有序点集。高精地图ROI点查询需要点云和多边形处在相同的坐标系，为此，Apollo将输入点云和HDMap多边形变换为来自激光雷达传感器位置的地方坐标系。
 
 这个阶段使用到的变换矩阵就是以上的lidar2world_trans矩阵。看了官方说明，并配合具体的代码，可能会存在一些疑惑。这里给出一些变换的研究心得。坐标变换的实现是在HdmapROIFilter::Filter函数中完成。具体的变换过程如下：
 
@@ -294,3 +292,7 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/roi_lookup_table.png)
 
 **思考：为什么不在车辆坐标系(IMU坐标系)或者lidar坐标系下面进行接下去的分割操作？(这两个坐标系的方向都参考车头的方向，是没有东南西北这些地理位置信息的)。**
+
+- ROI LUT构造
+
+>Apollo官方文档引用：Apollo采用网格显示查找表（LUT），如上图将ROI量化为俯视图2D网格，以此决定输入点是在ROI之内还是之外。如图1所示，该LUT覆盖了一个矩形区域，该区域位于高精地图边界上方，以普通视图周围的预定义空间范围为边界。它代表了与ROI关联网格的每个单元格（如用1/0表示在ROI的内部/外部）。 为了计算效率，Apollo使用 扫描线算法和位图编码来构建ROI LUT。
