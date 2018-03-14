@@ -169,10 +169,125 @@ bool GetVelodyneTrans(const double query_time, Eigen::Matrix4d* trans) {
 }
 ```
 
-从上述的代码中我们明显可以看到有两部分相似度很高的代码组成，第一部分是计算仿射变换矩阵lidar2novatel_trans，这个矩阵的计算通过ROS的tf模块调用lookupTransform函数完成。这部分的仿射变换矩阵是计算激光摄像头到GPS接收器相对于车辆坐标系的变换；第二部分是计算GPS接收器相对于世界坐标系的仿射变换矩阵。最后矩阵相乘得到车辆坐标系激光雷达到世界坐标系的仿射变换矩阵。
+点云数据由lidar获取，所以数据都是以激光雷达参考系作为主要参考系，在查询高精地图的时候需要世界坐标系数据。因此获取变换矩阵分为两步，第一步获取激光雷达lidar坐标系到惯测单元IMU坐标系的变换矩阵；第二步，获取惯测单元IMU坐标系到世界坐标系变换矩阵。从上述的代码中我们明显可以看到有两部分相似度很高的代码组成:
+
+- 计算仿射变换矩阵lidar2novatel_trans，激光雷达lidar坐标系到惯测IMU坐标系(车辆坐标系)变换矩阵。这个矩阵虽然通过ROS的tf模块调用lookupTransform函数计算完成，但是实际是外参决定，在运行过程中保持不变。
+```
+/// file in https://github.com/ApolloAuto/apollo/blob/master/modules/localization/msf/params/velodyne_params/velodyne64_novatel_extrinsics_example.yaml
+child_frame_id: velodyne64
+transform:
+  translation:
+    x: -0.0581372003122598
+    y: 1.459274166013735
+    z: 1.24965
+  rotation:
+    x: 0.02748694630673456
+    y: -0.03223034579615043
+    z: 0.7065742186090662
+    w: 0.706369978261802
+header:
+  seq: 0
+  stamp:
+    secs: 1512689414
+    nsecs: 0
+  frame_id: novatel
+```
+
+- 计算仿射变换矩阵novatel2world_trans，惯测单元IMU坐标系(车辆坐标系)相对于世界坐标系的仿射变换矩阵。最后矩阵相乘得到激光雷达lidar坐标系到世界坐标系的仿射变换矩阵。
+
+- 计算仿射变换矩阵lidar2world_trans，最终两个矩阵相乘得到激光雷达lidar坐标系到世界坐标系的变换矩阵。
 
 (3) 高精地图ROI过滤器
 
 高精地图 ROI 过滤器（往下简称“过滤器”）处理在ROI之外的激光雷达点，去除背景对象，如路边建筑物和树木等，剩余的点云留待后续处理。该过程共有三个子过程。
 
-- 坐标变换。由激光雷达测量得到的原始点云是基于局部坐标系的，而到经过高精地图处理得到路面和路口的ROI是世界坐标系的，所以需要经过一个坐标系转换，仿射变换矩阵就是上述的velodyne_trans。
+- 坐标变换。对于(高精地图ROI)过滤器来说，高精地图数据接口被定义为一系列多边形集合，每个集合由世界坐标系点组成有序点集。高精地图ROI点查询需要点云和多边形处在相同的坐标系，为此，Apollo将输入点云和HDMap多边形变换为来自激光雷达传感器位置的地方坐标系。这个阶段使用到的变换矩阵就是以上的lidar2world矩阵。看了官方文档，并配合具体的代码，可能会存在一些疑惑。这里给出一些变换的研究心得。
+
+坐标变换的实现是在HdmapROIFilter::Filter函数中完成。具体的变换过程如下：
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/hdmap_roi_filter.cc
+bool HdmapROIFilter::Filter(const pcl_util::PointCloudPtr& cloud,
+                            const ROIFilterOptions& roi_filter_options,
+                            pcl_util::PointIndices* roi_indices) {
+  Eigen::Affine3d temp_trans(*(roi_filter_options.velodyne_trans));
+  std::vector<PolygonDType> polygons;
+  MergeHdmapStructToPolygons(roi_filter_options.hdmap, &polygons);
+  ...
+  // Transform polygon and point to local coordinates
+  pcl_util::PointCloudPtr cloud_local(new pcl_util::PointCloud);
+  std::vector<PolygonType> polygons_local;
+  TransformFrame(cloud, temp_trans, polygons, &polygons_local, cloud_local);
+  ...
+}
+
+void HdmapROIFilter::TransformFrame(
+    const pcl_util::PointCloudConstPtr& cloud, const Eigen::Affine3d& vel_pose,
+    const std::vector<PolygonDType>& polygons_world,
+    std::vector<PolygonType>* polygons_local,
+    pcl_util::PointCloudPtr cloud_local) {
+  ...
+}
+
+```
+
+上面代码中MergeHdmapStructToPolygons函数负责把路口和路面的点云并入到多边形集合polygons，这里roi_filter_options里面的数据都是经过高精地图查询得到的路口和路面信息，是基于世界坐标系的，所以结果合并后polygons也是世界坐标系的数据。这里还需要注意的一点输入的cloud是基于lidar坐标系的点云数据，而下面代码还需要转换成cloud_local、polygons_local，按照注释解释是局部坐标系，那么这个局部坐标系到底是什么坐标系？如果看得懂TransformFrame函数，可以不难发现：**这个所谓"local coordinate system"，其实跟lidar坐标系很相近，他表示以lidar为原点的ENU坐标系**,这个坐标系是以X(东)-Y(北)-Z(天)为坐标轴的二维投影坐标系。在TransformFrame函数中，
+
+```
+  Eigen::Vector3d vel_location = vel_pose.translation();
+  Eigen::Matrix3d vel_rot = vel_pose.linear();
+  Eigen::Vector3d x_axis = vel_rot.row(0);
+  Eigen::Vector3d y_axis = vel_rot.row(1);
+```
+
+vel_location是lidar坐标系相对世界坐标系的平移，vec_rot则是lidar坐标系相对世界坐标系的旋转矩阵。那么从lidar坐标系到世界坐标系的坐标变换其实很简单，假设在lidar坐标系中有一个坐标点P(x1,y1,z1)，那么该点在世界坐标系下的坐标P_hat为: P_hat = vec_rot * P + vec_location. 了解了这个变换，接下来观察cloud和polygons的变换代码：
+
+```
+  polygons_local->resize(polygons_world.size());
+  for (size_t i = 0; i < polygons_local->size(); ++i) {
+    const auto& polygon_world = polygons_world[i];
+    auto& polygon_local = polygons_local->at(i);
+    polygon_local.resize(polygon_world.size());
+    for (size_t j = 0; j < polygon_local.size(); ++j) {
+      polygon_local[j].x = polygon_world[j].x - vel_location.x();
+      polygon_local[j].y = polygon_world[j].y - vel_location.y();
+    }
+  }
+```
+
+开始的时候也是很奇怪，为什么最后变换的形式是P_local = P_world - translation. 后来经过研究**猜测(有待后续深入阅读证实)**路口和路面多边形信息只经过平移达到新的局部ENU坐标系，可以推测其实世界坐标系也是ENU坐标系(具有方向性)，所以两个坐标系之间没有旋转，直接平移就可以从世界坐标系变换到局部ENU坐标系。
+
+```
+  cloud_local->resize(cloud->size());
+  for (size_t i = 0; i < cloud_local->size(); ++i) {
+    const auto& pt = cloud->points[i];
+    auto& local_pt = cloud_local->points[i];
+    Eigen::Vector3d e_pt(pt.x, pt.y, pt.z);
+    local_pt.x = x_axis.dot(e_pt);
+    local_pt.y = y_axis.dot(e_pt);
+  }
+```
+
+上述cloud变换再次验证了世界坐标系也是ENU坐标系类型的说话，局部ENU坐标系和lidar坐标系共原点，但是有一个旋转角度，lidar坐标系到世界坐标系变换的旋转矩阵是vel_rot，那么到局部ENU坐标系的旋转矩阵也是vel_rot，而且原点相同，所以两个坐标系的平移矩阵其实是0。最终变换到局部ENU坐标系的公式就是P_hat = vec_rot * P + 0。也就是上面看到的公式。
+
+另外补充一点猜测世界坐标系也是ENU类型坐标系的证据：
+
+```
+/// file in apollo/modules/perception/traffic_light/onboard/hdmap_input.cc
+bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::hdmap::Signal> *signals) {
+  auto hdmap = HDMapUtil::BaseMapPtr();
+  std::vector<hdmap::SignalInfoConstPtr> forward_signals;
+  apollo::common::PointENU point;
+  point.set_x(pointd(0, 3));
+  point.set_y(pointd(1, 3));
+  point.set_z(pointd(2, 3));
+  int result = hdmap->GetForwardNearestSignalsOnLane( point, FLAGS_query_signal_range, &forward_signals);
+  ...
+}
+```
+
+在交通信号灯感知模块中，有一个功能是根据当前车的位置，去查询高精地图，获取该位置处的信号灯信息。上面的代码中GetSignals函数实现了这个功能，输入pointd就是我们上述使用到的lidar2world_trans变换矩阵，下面的代码point是PointENU类型的点，并设置为变换矩阵的平移向量去世界坐标系查询(实际是去查询是世界坐标系下面车坐标对应位置的信号灯)。因此可以初步判断，世界坐标系是ENU类型坐标系。最后有个问题，转换到局部ENU坐标系有什么作用，以及效果。简单地说一下ENU坐标系是带有方向性的，所以转换到该坐标系下的polygeons_world和cloud_local其实是有东南西北的意思，从Apollo官方文档可以看到效果如下，得到当前位置下ROI区域内外的一个矩形框，这时候路面和路口就有东西南北走向的意义。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/roi_lookup_table.png)
+
+思考：为什么不在车辆坐标系(IMU坐标系)或者lidar坐标系下面进行接下去的分割操作？(这两个坐标系的方向都参考车头的方向，是没有东南西北这些地理位置信息的)。
