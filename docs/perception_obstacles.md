@@ -14,16 +14,22 @@
 
 每个子节点的输入数据与输出数据在边上标出。
 
-**(1) 激光雷达子节点LidarProcessSubnode::OnPointCloud以ROS消息订阅与发布机制触发回调函数，处理结果保存在LidarObjectData共享数据容器中。主要解决的问题有：**
+**(1) 激光雷达子节点**
+
+LidarProcessSubnode::OnPointCloud以ROS消息订阅与发布机制触发回调函数，处理结果保存在LidarObjectData共享数据容器中。主要解决的问题有：
 
 - 高精地图ROI过滤器(HDMap ROI Filter)
 - 基于卷积神经网络分割(CNN Segmentation)
 - MinBox 障碍物边框构建(MinBox Builder)
 - HM对象跟踪(HM Object Tracker)
 
-**(2) 雷达子节点RadarProcessSubnode::OnRadar同样以ROS消息订阅与发布机制触发回调函数，处理结果保存在RadarObjectData共享数据容器中。**
+**(2) 雷达子节点**
 
-**(3) 融合子节点FusionSubnode::ProcEvents以自定义ProcEvents+EventManeger消息处理机制，从LidarObjectData和RadarObjectData共享数据容器中提取数据，融合并存储在FusionObjectData共享容器中。**
+RadarProcessSubnode::OnRadar同样以ROS消息订阅与发布机制触发回调函数，处理结果保存在RadarObjectData共享数据容器中。
+
+**(3) 融合子节点**
+
+FusionSubnode::ProcEvents以自定义ProcEvents+EventManeger消息处理机制，从LidarObjectData和RadarObjectData共享数据容器中提取数据，融合并存储在FusionObjectData共享容器中。
 
 ### <a name="激光雷达感知">激光雷达感知 Perception: Lidar Obstacles PErception</a>
 
@@ -293,8 +299,13 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 
 **思考：为什么不在车辆坐标系(IMU坐标系)或者lidar坐标系下面进行接下去的分割操作？(这两个坐标系的方向都参考车头的方向，是没有东南西北这些地理位置信息的)。**
 
-- ROI LUT构造
+- ROI LUT构造与点查询
 
 >Apollo官方文档引用：Apollo采用网格显示查找表（LUT），如上图将ROI量化为俯视图2D网格，以此决定输入点是在ROI之内还是之外。如图1所示，该LUT覆盖了一个矩形区域，该区域位于高精地图边界上方，以普通视图周围的预定义空间范围为边界。它代表了与ROI关联网格的每个单元格（如用1/0表示在ROI的内部/外部）。 为了计算效率，Apollo使用 扫描线算法和位图编码来构建ROI LUT。
 
 >如上图，蓝色线条标出了高精地图ROI的边界，包含路表与路口。红色加粗点表示对应于激光雷达传感器位置的地方坐标系原始位置。2D网格由8\*8个绿色正方形组成，在ROI中的单元格，为蓝色填充的正方形，而之外的是黄色填充的正方形。
+
+>基于ROI LUT，查询每个输入点的关系使用两步认证。对于点查询过程，Apollo数据编译输出如下:
+>1. 检查点在ROI LUT矩形区域之内还是之外。
+>2. 查询LUT中相对于ROI关联点的相应单元格。
+>3. 收集属于ROI的所有点，并输出其相对于输入点云的索引。
