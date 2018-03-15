@@ -310,7 +310,7 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 >2. 查询LUT中相对于ROI关联点的相应单元格。
 >3. 收集属于ROI的所有点，并输出其相对于输入点云的索引。
 
-以上是Apollo官方文档描述的原话，确实看起来让人似懂非懂，能了解大概的作用流程，但是又对具体的细节毫无掌握。本节我们将从代码解剖上来具体了解所谓的"ROI LUT构造与点查询"。**简单地说这个环节的作用就是：将上述转换到局部ENU坐标系下的路面与路口ROI的二维信息映射到一张2D网格图中，网格图中0表示非路口路面区域，1表示路口遇路面区域。**
+以上是Apollo官方文档描述的原话，确实看起来让人似懂非懂，能了解大概的作用流程，但是又对具体的细节毫无掌握。本节我们将从代码解剖上来具体了解所谓的"ROI LUT构造与点查询"。**简单地说这个环节的作用就是：将上述转换到局部ENU坐标系下的路面与路口ROI的二维信息映射到一张2D网格图中，网格图中0表示非路口路面区域，1表示路口遇路面区域，然后判断点云中哪些点在路面ROI内(方便做行人，车辆分割)**
 
 先解释一下一些基本信息概念：
 
@@ -326,7 +326,7 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 |cell_size       | 用于量化2D网格的单元格的大小，主方向上两条网格线之间的距离                 |0.25 米  |
 |extend_dist     | 从多边形边界扩展ROI的距离。                 |0.0 米   |
 
-现在明白了ROI LUT的作用，接下去我们将从代码一步步了解Apollo采用的方案。上面小节讲到使用HdmapROIFilter::TransformFrame函数完成原始点云到局部ENU坐标系点云的转换以后得到了cloud_local映射原点云，polygons_local映射路面与路口多边形信息。接下来做的工作就是根据polygons_local构建ROI LUT。构建的过程在FilterWithPolygonMask函数中开启。
+现在明白了ROI LUT的作用，接下去我们将从代码一步步了解Apollo采用的方案。上面小节讲到使用TransformFrame函数完成原始点云到局部ENU坐标系点云的转换以后得到了cloud_local映射原点云，polygons_local映射路面与路口多边形信息。接下来做的工作就是根据polygons_local构建ROI LUT。构建的过程在FilterWithPolygonMask函数中开启。
 
 ```
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/hdmap_roi_filter.cc
