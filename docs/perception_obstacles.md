@@ -314,14 +314,297 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 
 先解释一下一些基本信息概念：
 
-1. 从上面映射到局部ENU坐标系的路口&&路面点云信息，这些点云并不是覆盖所有路口路面区域的，而是路口与路面的凸包，也就是角点。polygons_local里面其实存储了路面与边界线的角点/轮廓信息。
+1. 从上面映射到局部ENU坐标系的路口&&路面点云信息，这些点云并不是覆盖所有路口路面区域的，而是路口与路面的凸包，也就是角点。polygons_local里面其实存储了路面与边界线的角点/轮廓信息。cloud_local是所有原始点云映射到ENU局部坐标系过后的信息。
 2. 需要将原先路口与路面等多边形的角点存储模式(节省内存)转换到填充模式，用到最常用的算法就是扫描线算法，具体请参考GitHub首页链接。
 3. 这个填充模式需要用到一个填充的2d网格，网格的大小范围、网格之间的间距(扫描线之间的大小)等信息，由外部文件定义如下，而最后如何2D网格节省存储开销，就用到了bitmap数据结构：
 
 用户定义的参数可在配置文件`modules/perception/model/hdmap_roi_filter.config`中设置，HDMap ROI Filter 参数使用参考如下表格：
 
-  |参数名称      |使用                                                                          |默认     |
-  |------------------- |----------------------------------------------------------------------- |------------|
-  |range           | 基于LiDAR传感器点的2D网格ROI LUT的图层范围(说白了就是以lidar为中心，ENU坐标系下，东西方向x的范围，南北方向y的方位)，如(-70, 70)*(-70, 70) |70.0 米 |
-  |cell_size       | 用于量化2D网格的单元格的大小，主方向上两条网格线之间的距离                 |0.25 米  |
-  |extend_dist     | 从多边形边界扩展ROI的距离。                 |0.0 米   |
+|参数名称      |使用                                                                          |默认     |
+|------------------- |----------------------------------------------------------------------- |------------|
+|range           | 基于LiDAR传感器点的2D网格ROI LUT的图层范围(说白了就是以lidar为中心，ENU坐标系下，东西方向x的统计范围，南北方向y的统计范围)，如(-70, 70)*(-70, 70) |70.0 米 |
+|cell_size       | 用于量化2D网格的单元格的大小，主方向上两条网格线之间的距离                 |0.25 米  |
+|extend_dist     | 从多边形边界扩展ROI的距离。                 |0.0 米   |
+
+现在明白了ROI LUT的作用，接下去我们将从代码一步步了解Apollo采用的方案。上面小节讲到使用HdmapROIFilter::TransformFrame函数完成原始点云到局部ENU坐标系点云的转换以后得到了cloud_local映射原点云，polygons_local映射路面与路口多边形信息。接下来做的工作就是根据polygons_local构建ROI LUT。构建的过程在FilterWithPolygonMask函数中开启。
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/hdmap_roi_filter.cc
+bool HdmapROIFilter::Filter(const pcl_util::PointCloudPtr& cloud,
+                            const ROIFilterOptions& roi_filter_options,
+                            pcl_util::PointIndices* roi_indices) {
+  // 1. Transform polygon and point to local coordinates
+  TransformFrame(cloud, temp_trans, polygons, &polygons_local, cloud_local);
+
+  return FilterWithPolygonMask(cloud_local, polygons_local, roi_indices);
+}
+
+bool HdmapROIFilter::FilterWithPolygonMask(
+    const pcl_util::PointCloudPtr& cloud,
+    const std::vector<PolygonType>& map_polygons,
+    pcl_util::PointIndices* roi_indices) {
+  // 2. Get Major Direction as X direction and convert map_polygons to raw
+  // polygons
+  std::vector<PolygonScanConverter::Polygon> raw_polygons(map_polygons.size());
+  MajorDirection major_dir = GetMajorDirection(map_polygons, &raw_polygons);
+
+  // 3. Convert polygons into roi grids in bitmap
+  Eigen::Vector2d min_p(-range_, -range_);
+  Eigen::Vector2d max_p(range_, range_);
+  Eigen::Vector2d grid_size(cell_size_, cell_size_);
+  Bitmap2D bitmap(min_p, max_p, grid_size, major_dir);
+  bitmap.BuildMap();
+
+  DrawPolygonInBitmap(raw_polygons, extend_dist_, &bitmap);
+
+  // 4. Check each point whether is in roi grids in bitmap
+  return Bitmap2dFilter(cloud, bitmap, roi_indices);
+}
+```
+
+可以看到构建的过程总共分为3部分(其实2,3就能完成构建；4只是check，去除cloud_local中在路面ROI以外的点云)，接下来逐个分析流程，第2步求polygons_local的主方向比较简单，只要计算多边形点云集合中，x/东西方向与y/南北方向最大值与最小值的差，差越大跨度越大。选择跨度小的方向作为主方向。(这部分代码比较简单，所以不再贴出来)。
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/bitmap2d.cc
+Bitmap2D::Bitmap2D(const Eigen::Vector2d& min_p, const Eigen::Vector2d& max_p, const Eigen::Vector2d& grid_size, DirectionMajor dir_major) {
+  dir_major_ = dir_major;
+  op_dir_major_ = opposite_direction(dir_major);
+  min_p_ = min_p;
+  max_p_ = max_p;
+  grid_size_ = grid_size;
+}
+
+void Bitmap2D::BuildMap() {
+  Eigen::Matrix<size_t, 2, 1> dims = ((max_p_ - min_p_).array() / grid_size_.array()).cast<size_t>();
+  size_t rows = dims[dir_major_];
+  size_t cols = (dims[op_dir_major_] >> 6) + 1;
+  bitmap_ = std::vector<std::vector<uint64_t>>(rows, std::vector<uint64_t>(cols, 0));
+}
+```
+
+在构建bitmap的过程中，上面的代码对应bitmap初始化，主要做的工作就是设置参数，设置min_p_，max_p_，这两个参数就是对应外部文件的range参数，默认70米。grid_size是网格线之间的距离，默认0.25m。最后可以看到申请了一个bitmap_的2D向量，这个向量有rows行能理解，为什么列cols需要除以2^6次(64)呢？答案是因为他是bitmap，一个bit(unsigned64，64位)每一位存储一个0/1值，起到节省开销作用。所以bitmap_的大小如果是mxn，那么他可以存储mx64n网格大小的数据。
+
+难点是DrawPolygonInBitmap函数，这也是主要工作完成的函数，在这个函数里面，会真正的构建ROI LUT。我们简单地分析一下代码：
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_mask.cc
+void DrawPolygonInBitmap(const typename PolygonScanConverter::Polygon& polygon, const double extend_dist, Bitmap2D* bitmap) {
+  ...
+  // 1. Get valid x range
+  Interval valid_x_range;
+  GetValidXRange(polygon, *bitmap, major_dir, major_dir_grid_size, &valid_x_range);
+
+  // 2. Convert polygon to scan intervals(Most important)
+  std::vector<std::vector<Interval>> scans_intervals;
+  PolygonScanConverter polygon_scan_converter;
+  polygon_scan_converter.Init(major_dir, valid_x_range, polygon, major_dir_grid_size);
+  polygon_scan_converter.ConvertScans(&scans_intervals);
+
+  // 3. Draw grids in bitmap based on scan intervals
+  double x = valid_x_range.first;
+  for (size_t i = 0; i < scans_intervals.size(); x += major_dir_grid_size, ++i) {
+    for (const auto& scan_interval : scans_intervals[i]) {
+      ...
+      bitmap->Set(x, valid_y_range.first, valid_y_range.second);
+    }
+  }
+}
+
+/// file in modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
+void PolygonScanConverter::ConvertScans( std::vector<std::vector<Interval>> *scans_intervals) {
+  scans_intervals->resize(scans_size_);
+
+  DisturbPolygon();
+  ConvertPolygonToSegments();
+  BuildEdgeTable();
+
+  // convert polygon to filled table
+  ...
+}
+```
+
+从上面段代码我们来分析一下DrawPolygonInBitmap的流程，首先GetValidXRange函数其实是获取主方向上，最大值和最小值，跟MajorDirection几乎无差异，这里不在分析。有基础的应该容易看懂。接着第二部分是将路面与边界线的多边形有序集合转换成Edge信息，如何转换？
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_roi_lut.png)
+
+需要了解一个前提，polygons_local里面存储了路面和路口的多边形信息，对于每个多边形polygon，它里面存储了N个点云(主要使用其xy坐标)，物体的轮廓点是有序的排列的，所以每两个相邻的点可以构建一条边，最后得到一个封闭的轮廓(如上图A所示)。那么接下去我们就需要将这个角点存储形式彻底转换成填充形式，转换的步骤是:
+
+1. 如上图B，DisturbPolygon函数是将polygon里面的坐标，过于靠近网格线(坐标差值在epsion以内)的点稍微推离网格线，原因便于步骤3中处理网格线附近的边，经过推离以后，网格线附近的边要么是不穿过网格线，要么就明显的横穿网络，减少那种差一点就横穿网格线的边，降低判断逻辑。代码中可以很明确的看到这个目的：
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
+void PolygonScanConverter::DisturbPolygon() {
+  for (auto &pt : polygon_) {
+    double &x = pt[major_dir_];
+    double d_x = (x - min_x_) / step_;
+    int int_d_x = std::round(d_x);
+    double delta_x = d_x - int_d_x;
+    if (std::abs(delta_x) < kEpsilon) {
+      if (delta_x > 0) { x = (int_d_x + kEpsilon) * step_ + min_x_; } 
+      else { x = (int_d_x - kEpsilon) * step_ + min_x_; }
+    }
+  }
+}
+```
+
+2. 如上图C，ConvertPolygonToSegments函数将多边形相邻的两个点保存出他们的边segment_(以pair<point,point>形式存储)，同时计算得到这条边的斜率slope_，那么最后计算得到的segment_和slope_里面保存的信息方式为：
+
+segment_: {<P1,P2>, <P2,P3>, <P3,P4>, <P5,P4>, <P6,P5>, <P7,P6>, <P7,P8>};
+slope_: {0.2, 0.8, -4, 0.7, 0.4, -1, 10, 8}
+
+这里segment_里面每个元素两个点存储的顺序依赖其主方向上的坐标值，永远是后面一个点的坐标比前面一个点的坐标大。segment_[n].first.x < segment_[n].second.x，在代码中也相对比较简单。
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
+void PolygonScanConverter::ConvertPolygonToSegments() {
+  for (size_t i = 0; i < vertices_num; ++i) {
+    const Point &cur_vertex = polygon_[i];                          // first point
+    const Point &next_vertex = polygon_[(i + 1) % vertices_num];    // second point
+    if (cur_vertex[major_dir_] < next_vertex[major_dir_]) {         // store segment which segment_[i].first.x < segment_[i].second.x
+      segments_.emplace_back(cur_vertex, next_vertex);
+    } else {
+      segments_.emplace_back(next_vertex, cur_vertex);
+    }
+    // compute k
+    double x_diff = next_vertex[major_dir_] - cur_vertex[major_dir_];    
+    double y_diff = next_vertex[op_major_dir_] - cur_vertex[op_major_dir_];
+    std::abs(cur_vertex[major_dir_] - next_vertex[major_dir_]) < kEpsilon
+        ? slope_.push_back(kInf) : slope_.push_back(y_diff / x_diff);
+  }
+}
+```
+3. 如上图D，根据主方向上的valid_range(最大坐标和最小坐标差值)，以及网格线间距grid_size，画出valid_range/grid_size条网格线，然后根据segment_里面的两个点计算每条边跟其后面的网格线的第一个交点E。这里计算E有什么用？为什么只计算第一个交点E，而不计算边S和所有网格线可能的交点？
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
+bool PolygonScanConverter::ConvertSegmentToEdge(const size_t seg_id, std::pair<int, Edge> *out_edge) {
+  const Segment &segment = segments_[seg_id];
+
+  double min_x = segment.first[major_dir_] - min_x_;
+  double min_y = segment.first[op_major_dir_];
+
+  int x_id = std::ceil(min_x / step_);
+  out_edge->first = x_id;
+
+  Edge &edge = out_edge->second;
+  edge.x = x_id * step_;
+  edge.max_x = segment.second[major_dir_] - min_x_;
+  edge.max_y = segment.second[op_major_dir_];
+  edge.k = slope_[seg_id];
+
+  if (std::isfinite(edge.k)) {
+    edge.y = min_y + (edge.x - min_x) * edge.k;
+  } else {
+    edge.y = min_y;
+    if (edge.y > edge.max_y) {
+      std::swap(edge.y, edge.max_y);
+    }
+  }
+  if (std::isfinite(edge.k) && edge.max_x < edge.x) {
+    return false;
+  }
+  return true;
+}
+```
+
+上面代码相对来说也不是特别难理解，min_x, min_y是计算这个边segment到主方向最左端的距离以及次方向上的坐标。通过x_id=ceil(min_x/step_)可以求出边的起点和后面相交的网格线id，最后edge.x, edge.y存储这个交点坐标。这里的edge.max_x，edge.max_y有什么作用？他解决了上述"边与其他后续网格线的交点坐标怎么计算？"这个问题。通过(edge.x, edge.y)作为起点，加上斜率k，就能计算该条边和接下来网格线的交点。
+
+比如已知边segment和下条网格线x_id的交点坐标为(edge.x, edge.y)，那么和下面第二条网格线x_id+1的交点坐标计算方法为：
+(x, y) = (edge.x+step_, edge.y+k\*step_)，那么怎么知道这个交点在这条边上还是在边的延长线上(不属于这条边)呢，只要判断计算得到的x小于edge.max_x是否成立，成立边和x_id+1网格线有交点，否则无交点。
+
+另外返回false的条件是什么意思，"k有限大并且边与x_id号网络线交点超过了边的最大坐标(在边的延长线上)"，这说明，这条边与x_id号网格线没有交点，也不是垂直边，无效边！
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_roi_lut2.png)
+
+4. 如上图E，第一个问题"计算E有什么用?" 首先我们要知道一个问题：如果多边形只包含凸或者凹行，那么网格线穿过多边形，如何计算落在多边形ROI里面的区间？只要计算多边形和改网格线的交点，然后按照y的大小从小到大排列，必定是2n的交点{P1,P2,P3,...,P2n}，那么落入多边形的区间肯定是[P1.y,P2.y] [P3.y, P4.y], .. , [P2n-1.y, P2n.y]。这个可以从上图证实。那么对于3中的交点E可以排序，最终得到路面与路口区域落在该网格线上的区间。这部分代码有点难，可以慢慢体会：
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
+void PolygonScanConverter::UpdateActiveEdgeTable(
+    const size_t x_id, std::vector<Interval> \*scan_intervals) {
+  size_t valid_edges_num = active_edge_table_.size();
+  size_t invalid_edges_num = 0;
+  // For each edege in active edge table, check whether it is still valid.
+  // Stage 1 
+  for (auto &edge : active_edge_table_) {
+    if (!edge.MoveUp(step_)) {
+      --valid_edges_num;
+      ++invalid_edges_num;
+      edge.y = kInf;
+    }
+  }
+  // Stage 2
+  size_t new_edges_num = 0;
+  for (const auto &edge : edge_table_[x_id]) {
+    if (std::isfinite(edge.k)) {
+      ++valid_edges_num;
+      ++new_edges_num;
+      active_edge_table_.push_back(edge);
+    } else {
+      scan_intervals->emplace_back(edge.y, edge.max_y);
+    }
+  }
+  // Stage 3
+  if (invalid_edges_num != 0 || new_edges_num != 0) {
+    std::sort(active_edge_table_.begin(), active_edge_table_.end(),
+              [](const Edge &a, const Edge &b) { return a.y < b.y; });
+    active_edge_table_.erase(next(active_edge_table_.begin(), valid_edges_num), active_edge_table_.end());
+  }
+  // Stage 4
+  for (size_t i = 0; i + 1 < active_edge_table_.size(); i += 2) {
+    double min_y = active_edge_table_[i].y;
+    double max_y = active_edge_table_[i + 1].y;
+
+    scan_intervals->emplace_back(min_y, max_y);
+  }
+}
+```
+
+根据代码段我暂时将ROI区间计算分为4个阶段，第一个阶段就是3中所讨论的问题，每条边开始知己算了跟后一条x_id-1网格线的交点，那么跟后续网格线x_id, x_id+1的交点怎么计算(计算如上图的E13，E53)，这里通过MoveUp(step_)函数向后推演一个step_计算，函数跟上面讲得一致，最后返回时候超过边最大x,超过则丢弃，不超过保留。第二阶段增加是否有新的边由步骤3中直接计算得到(新加入如上图的E1-E7,)；第三阶段就是按照次方向y的值从小到大排列，并删除超出边的那些点；最后一个阶段就是计算落入多边形与id_x网格线相交的区间，
+
+经过BCDE四步骤，就能将基于定点存储形式的路口与路面坐标转化成填充形式。最后得到的结果是vector<std::vector<Interval>> \*scans_intervals形式的扫描结果，2D向量，每行对应一个扫描线；每行的vector存储对应的路面ROI区间。最后就只要把scans_intervals这个扫描结果转换成bitmap的填充就行了，也就是将scans_intervals放入bitmap_的即可。填充部分，代码相对比较简单，这里就省略了，可能以64位bit的形式进行存储有点点让人费解，不过没关心，相信有C++数据结构基础的你一定能理解。
+
+最后要做的就是对原始点云cloud_local进行处理，去掉ROI以外的点云，留下ROI以内的点云，供下一步行人，车辆等物体分割。
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
+bool HdmapROIFilter::Bitmap2dFilter(const pcl::PointCloud<pcl_util::Point>::ConstPtr in_cloud_ptr,
+    const Bitmap2D& bitmap, pcl_util::PointIndices* roi_indices_ptr) {
+  roi_indices_ptr->indices.reserve(in_cloud_ptr->size());
+  for (size_t i = 0; i < in_cloud_ptr->size(); ++i) {
+    const auto& pt = in_cloud_ptr->points[i];
+    Eigen::Vector2d p(pt.x, pt.y);
+    if (bitmap.IsExist(p) && bitmap.Check(p)) {
+      roi_indices_ptr->indices.push_back(i);
+    }
+  }
+  return true;
+}
+
+/// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/bitmap2d.cc
+bool Bitmap2D::IsExist(const Eigen::Vector2d& p) const {
+  if (p.x() < min_p_.x() || p.x() >= max_p_.x()) {
+    return false;
+  }
+  if (p.y() < min_p_.y() || p.y() >= max_p_.y()) {
+    return false;
+  }
+  return true;
+}
+
+bool Bitmap2D::Check(const Eigen::Vector2d& p) const {
+  Eigen::Matrix<size_t, 2, 1> grid_pt = ((p - min_p_).array() / grid_size_.array()).cast<size_t>();
+  Eigen::Matrix<size_t, 2, 1> major_grid_pt(grid_pt[dir_major_], grid_pt[op_dir_major_]);
+
+  size_t x_id = major_grid_pt.x();
+  size_t block_id = major_grid_pt.y() >> 6;  // major_grid_pt.y() / 64
+  size_t bit_id = major_grid_pt.y() & 63;    // major_grid_pt.y() % 64
+
+  const uint64_t& block = bitmap_[x_id][block_id];
+
+  const uint64_t first_one = static_cast<uint64_t>(1) << 63;
+  return block & (first_one >> bit_id);
+}
+```
+
+从上面代码中不难看到其实针对每个基于ENU局部坐标系的点云cloud，根据其x和y去bitmap里面做check，第一check该点是否落在这个网格里面(x:[-range,range], y:[-range,range])，这个检查由isExist函数完成；第二个check，如果该点在LUT网格内，那么check这个点是否在路面ROI内，只要检查其对应的网格坐标去bitmap查询即可，1表示在路面；0表示在路面外，这个检查由Check函数完成。最后cloud点云中每个点是否在路面ROI内全部记录在roi_indices_ptr内，里面本质就是一个向量，大小跟cloud里面的点云数量相等，结果一一对应。
