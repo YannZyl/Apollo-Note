@@ -14,16 +14,16 @@
 
 每个子节点的输入数据与输出数据在边上标出。
 
-(1) 激光雷达子节点LidarProcessSubnode::OnPointCloud以ROS消息订阅与发布机制触发回调函数，处理结果保存在LidarObjectData共享数据容器中。主要解决的问题有：
+**(1) 激光雷达子节点LidarProcessSubnode::OnPointCloud以ROS消息订阅与发布机制触发回调函数，处理结果保存在LidarObjectData共享数据容器中。主要解决的问题有：**
 
 - 高精地图ROI过滤器(HDMap ROI Filter)
 - 基于卷积神经网络分割(CNN Segmentation)
 - MinBox 障碍物边框构建(MinBox Builder)
 - HM对象跟踪(HM Object Tracker)
 
-(2) 雷达子节点RadarProcessSubnode::OnRadar同样以ROS消息订阅与发布机制触发回调函数，处理结果保存在RadarObjectData共享数据容器中。
+**(2) 雷达子节点RadarProcessSubnode::OnRadar同样以ROS消息订阅与发布机制触发回调函数，处理结果保存在RadarObjectData共享数据容器中。**
 
-(3) 融合子节点FusionSubnode::ProcEvents以自定义ProcEvents+EventManeger消息处理机制，从LidarObjectData和RadarObjectData共享数据容器中提取数据，融合并存储在FusionObjectData共享容器中。
+**(3) 融合子节点FusionSubnode::ProcEvents以自定义ProcEvents+EventManeger消息处理机制，从LidarObjectData和RadarObjectData共享数据容器中提取数据，融合并存储在FusionObjectData共享容器中。**
 
 ### <a name="激光雷达感知">激光雷达感知 Perception: Lidar Obstacles PErception</a>
 
@@ -90,7 +90,7 @@ sensor_msgs::PointCloud2与第一个版本sensor_msgs::PointCloud有一些区别
 
 还有一个细节，激光雷达获取的点云是ROS原始的sensor_msgs::PointClouds类型，而实际处理过程中使用的更多的是PCL库的pcl::PointCloud<T>类型，需要在代码中做一个转换，使用pcl_conversions的pcl::fromROSMsg和pcl::toROSMsg函数即可方便的实现相互转换。
 
-(1) 数据转换与ROI生成
+**(1) 数据转换与ROI生成**
 
 在进行高精地图ROI过滤的过程中，第一步是接收来自激光雷达的原始点云数据，设备id，时间戳ts等信息，并将其信息存入上述的SensorObject类中。存储过程中代码中值得关注的两个点分别是传感器到世界坐标系的转换矩阵velodyne_trans以及sensor_msgs::PointCloud2到PCL::PointCloud的转换。
 
@@ -189,7 +189,7 @@ header:
 
 - 计算仿射变换矩阵lidar2world_trans，最终两个矩阵相乘得到激光雷达lidar坐标系到世界坐标系的变换矩阵。
 
-(2) 高精地图ROI过滤器
+**(2) 高精地图ROI过滤器**
 
 高精地图 ROI 过滤器（往下简称“过滤器”）处理在ROI之外的激光雷达点，去除背景对象，如路边建筑物和树木等，剩余的点云留待后续处理。该过程共有三个子过程。
 
@@ -236,7 +236,7 @@ void HdmapROIFilter::TransformFrame(
   Eigen::Vector3d y_axis = vel_rot.row(1);
 ```
 
-vel_location是lidar坐标系相对世界坐标系的平移成分，vec_rot则是lidar坐标系相对世界坐标系的旋转矩阵。那么从lidar坐标系到世界坐标系的坐标变换其实很简单，假设在lidar坐标系中有一个坐标点P(x1,y1,z1)，那么该点在世界坐标系下的坐标P_hat为: P_hat = vel_rot * P + vec_location. 了解了这个变换，接下来观察cloud和polygons的变换代码：
+vel_location是lidar坐标系相对世界坐标系的平移成分，vel_rot则是lidar坐标系相对世界坐标系的旋转矩阵。那么从lidar坐标系到世界坐标系的坐标变换其实很简单，假设在lidar坐标系中有一个坐标点P(x1,y1,z1)，那么该点在世界坐标系下的坐标P_hat为: P_hat = vel_rot * P + vel_location. 了解了这个变换，接下来观察cloud和polygons的变换代码：
 
 ```
   polygons_local->resize(polygons_world.size());
@@ -267,7 +267,7 @@ P_world = vel_rot * P_local + translation
   }
 ```
 
-上述cloud变换代码再次验证了世界坐标系也是ENU坐标系类型的说法，局部ENU坐标系和lidar坐标系共原点但存在一个旋转角度，lidar坐标系到世界坐标系变换的旋转矩阵是vel_rot，那么到局部ENU坐标系的旋转矩阵也应该是vel_rot；其次共原点说明两个坐标系的平移矩阵其实是0。最终变换到局部ENU坐标系的公式就是：P_hat = vec_rot * P + 0。也就是上面看到的公式。
+上述cloud变换代码再次验证了世界坐标系也是ENU坐标系类型的说法，局部ENU坐标系和lidar坐标系共原点但存在一个旋转角度，lidar坐标系到世界坐标系变换的旋转矩阵是vel_rot，那么到局部ENU坐标系的旋转矩阵也应该是vel_rot；其次共原点说明两个坐标系的平移矩阵其实是0。最终变换到局部ENU坐标系的公式就是：P_hat = vel_rot * P + 0。也就是上面看到的公式。
 
 另外补充一点猜测世界坐标系也是ENU类型坐标系的证据：
 
@@ -296,3 +296,5 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 - ROI LUT构造
 
 >Apollo官方文档引用：Apollo采用网格显示查找表（LUT），如上图将ROI量化为俯视图2D网格，以此决定输入点是在ROI之内还是之外。如图1所示，该LUT覆盖了一个矩形区域，该区域位于高精地图边界上方，以普通视图周围的预定义空间范围为边界。它代表了与ROI关联网格的每个单元格（如用1/0表示在ROI的内部/外部）。 为了计算效率，Apollo使用 扫描线算法和位图编码来构建ROI LUT。
+
+>如上图，蓝色线条标出了高精地图ROI的边界，包含路表与路口。红色加粗点表示对应于激光雷达传感器位置的地方坐标系原始位置。2D网格由8\*8个绿色正方形组成，在ROI中的单元格，为蓝色填充的正方形，而之外的是黄色填充的正方形。
