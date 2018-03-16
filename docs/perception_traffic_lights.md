@@ -2,7 +2,7 @@
 
 本文档结合代码详细地解释感知模块中交通信号灯感知的流程与功能，也可以官方参考文档([Apollo 2.0 Traffic Light Perception](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/traffic_light.md))
 
-## <a name="信号灯感知">信号灯感知: Traffic Light Perception</a>
+## 1. 信号灯感知: Traffic Light Perception
 
 交通信号灯模块主要是提供精确的信号灯识别，通常信号灯有三种状态：
 
@@ -48,7 +48,7 @@
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/framework_traffic_lights.png)
 
-### <a name="信号灯预处理">信号灯预处理: Traffice Light Preprocess</a>
+## 2. 信号灯预处理: Traffice Light Preprocess
 
 预处理阶段主要的工作是为信号灯处理阶段Traffic Light Process选择合适的相机。针对每个路况下车辆的定位与姿态，查询高精地图HD Map得到该路况下的信号灯情况(是否存在，存在的话位置多少)，然后将3D世界坐标系下的信号灯坐标分别投影到长焦和广角摄像头下的2D图像坐标系。接着根据投影过后新的信号灯是否全部暴露在摄像头下(映射信号灯标定框在图像内部)，来选择合适的摄像头。最终将摄像头id，采集到的真实路况图像，投影过后信号灯坐标等信息发布给Process子节点进行信号灯的状态识别。
 
@@ -58,7 +58,9 @@
 
 上图中虚线框为实际回调函数及其间接调用函数逻辑。在代码中，两类回调函数将会调用SubCameraImage函数进行处理，而处理过程主要分3步，分别为：相机选择，缓存同步和信息校验。
 
-(1) 相机选择 CameraSelection，选择使用合适的摄像头，不接触具体的图像信息。
+### 2.1 相机选择 CameraSelection
+
+选择使用合适的摄像头，不接触具体的图像信息。
 
 在图像坐标系中，HD Map查询得到的交通信号灯结果可以表示为<灯id，标定框>的一个组合，标定框由边界上的4个点组成，每个点坐标为(x,y,z)，而映射到摄像头中的2D图像坐标系，每个点坐标为(x,y)。那么交通信号灯singal info可以以数学的方式表示为(只要给定车辆位置，可以通过高精地图HD Map查询4个点的世界坐标系)：
 
@@ -173,7 +175,7 @@ typedef std::shared_ptr<ImageLights> ImageLightsPtr;
 
 相机选择阶段的基本流程为：
 
-- 如果上一次查询距离当前时间很近(小于一个阈值，配置文件设定为0.2s，低频率调用)，则跳过本次相机选择，沿用上一次相机id对应的配置。
+1. 如果上一次查询距离当前时间很近(小于一个阈值，配置文件设定为0.2s，低频率调用)，则跳过本次相机选择，沿用上一次相机id对应的配置。
 
 ```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc
@@ -193,7 +195,7 @@ float_params {
 }
 ```
 
-- 获取车辆位置信息(使用ROS的tf，可以参考wiki的[tf_tutorials](http://wiki.ros.org/tf/Tutorials#Learning_tf))，同时根据车辆信息查询高精地图，获取信号灯等信息.(该部分与定位模块&&高精地图模块相关)。使用定位信息和高精地图查询到的信号灯信息，并对综合信息进行缓存并且将高精地图产生的3D世界坐标洗映射到2D图像坐标系(缓存信息包含：摄像头id，Hdmap得到的图像，信号灯信息等等)。
+2. 获取车辆位置信息(使用ROS的tf，可以参考wiki的[tf_tutorials](http://wiki.ros.org/tf/Tutorials#Learning_tf))，同时根据车辆信息查询高精地图，获取信号灯等信息.(该部分与定位模块&&高精地图模块相关)。使用定位信息和高精地图查询到的信号灯信息，并对综合信息进行缓存并且将高精地图产生的3D世界坐标洗映射到2D图像坐标系(缓存信息包含：摄像头id，Hdmap得到的图像，信号灯信息等等)。
 
 ```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc
@@ -275,7 +277,7 @@ a) 如果该摄像头的lights_outside_image不为空，即存在某些信号灯
 
 b) 经过a)步骤的处理，可以得到若干摄像头，这些摄像头存在一个共性：都能看到映射过后的所有信号灯。接来下就需要从中选择一个摄像头使用，默认是用广角摄像头(短焦)，如果长焦也能看到所有的信号灯，那么就需要给定一个判断前提：如果信号灯的标定框都在图像有效区域(代码中使用的投影图像大小为1080p/1920x1080，默认图像四周100以内的像素块为边界区，不能被使用，即真正的有效区域为[100:980,100:1820]。如果信号灯标定框落在这个区域之外，则视为无效处理)，则可以选择长焦摄像头，否则选择短焦摄像头。
 
-(2) 信号灯缓存同步
+### 2.2 信号灯缓存同步
 
 在相机选择与信号灯缓存映射过程中，对于车辆不同位置查询高精地图产生的signals会进行一个相机选择，选择合适的能保证看到所有信号灯的相机。本应该就可以直接发布对应的摄像头id，Process子节点根据对应的摄像头id进行信号灯状态检测。但是现实存在一个问题，CameraSelection是低频调用的(0.2s执行一次)，每次执行回调函数的时候CameraSelection不一定都会被执行，也就是说回调过程不一定会执行相机选择！这种情况下如何确定下阶段需要使用的摄像头？这就导致不执行CameraSlection函数的回调过程需要进行一次确认，确认通过才能发布信息，否则本次回调不发布信息，确认需要用到的数据就是历次相机选择过程保存的缓存信息。(本次的回调和缓存信息比对时，可能时间戳很相近但是camera id可能会不一样，也可能是camera id一样但时间戳差异很大，也可能没有缓存记录，这种情况下就不能确定当前时刻该使用哪个摄像头。)
 
@@ -312,7 +314,7 @@ bool TLPreprocessor::SyncImage(const ImageSharedPtr &image, ImageLightsPtr *imag
 - 时间戳漂移
 - Image未被选择，找不到匹配的camera或者找不到时间戳差异较小的缓存记录
 
-(3) 信息校验
+### 2.3 信息校验
 
 最后注意一个问题，当前时刻虽然利用camera id和时间戳ts找到了合适的camera，并不能立即结束Preprocess阶段，这个时候还有一个工作，就是再次check，保证此刻由高精地图查询到的signals里面的信号灯都暴露在这个摄像头内。代码中调用VerifyLightsProjection函数进行二次验证，实际上是简介再次调用ProjectLights验证。Why check again？因为SynImage仅仅根据时间戳ts和相机id查询缓存，如果匹配失败则无所谓，不会发布任何信息直接return false；如果匹配成功则会产生候选相机，但是这个过程并不会去验证信号灯signals映射后是否会全部暴露在这个候选相机下(本次回调没有执行CameraSelection的情况下)，所以就需要再次验证信号灯情况。使用简洁的关系图表示如下：
 
@@ -363,7 +365,7 @@ bool TLPreprocessorSubnode::AddDataAndPublishEvent(
 
 代码显示信息发布过程是人为的写入共享数据类队列中TLPreprocessingData，而event_manager做信息记录。
 
-### <a name="信号灯处理">信号灯处理: Traffic Light Process</a>
+## 3. 信号灯处理: Traffic Light Process
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_process.png)
 
@@ -371,14 +373,14 @@ bool TLPreprocessorSubnode::AddDataAndPublishEvent(
 
 上图是信号灯处理流程图，从代码层面来看，处理阶段并不是采用ROS topic的消息订阅机制，而是采用共享数据类存储的方法进行输入输出提取与存储(具体说明请参考[DAG运行](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception_software_arch.md/#DAG运行))。处理阶段工作比较简单，主要是使用预处理阶段建议的摄像头，以及由高精地图查询得到信号灯在该摄像头下2D图像坐标系中的标定框project_roi，匹配真实路况图像(摄像头提取)，获取真实图像下信号灯的标定框，进行整流，识别与校验。最终得到各个信号灯的状态信息。
 
-(1) 整流器 Rectifier
+### 3.1 整流器 Rectifier
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/rectifier.jpg)
 
 如上图，在高精地图3D坐标到摄像头2D坐标转换的过程中，得到2D信号灯坐标实际并不准确，存在一定程度的坐标偏差。图中蓝色标定框是3D到2D转换过程中得到的映射结果，实际上应该对应右边绿灯信号灯的标定框，奈何存在较大不可控的误差。如何解决映射过程中坐标的漂移？在代码中采用了ROI生成+信号灯重新检测的方案：
 
-- 首先，将映射的标定框中心点固定，宽高以一定的scale扩大(Apollo中由crop_scale控制，默认2.5倍)得到更大的ROI区域(图中黄色区域)，这个ROI区域非常大概率的包含了信号灯
-- 然后，使用检测网络(ResNet-RFCN)从这个ROI区域中检测得到信号灯的真实坐标。由于ROI相对较小，检测速度比较快。
+1. 首先，将映射的标定框中心点固定，宽高以一定的scale扩大(Apollo中由crop_scale控制，默认2.5倍)得到更大的ROI区域(图中黄色区域)，这个ROI区域非常大概率的包含了信号灯
+2. 然后，使用检测网络(ResNet-RFCN)从这个ROI区域中检测得到信号灯的真实坐标。由于ROI相对较小，检测速度比较快。
 
 ```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
@@ -514,7 +516,7 @@ void GaussianSelect::Select(const cv::Mat &ros_image,
 
 - 当然还有一种情况，如果RFCN在ROI实际检测过程中没有检测到任何的信号灯dectect_bbox为空，则就把该信号灯状态直接置为unknown，跳过后续的recognizer和reviser阶段，因为没必要再检测。
 
-(2) 识别器 Recognizer
+### 3.1 识别器 Recognizer
 
 识别器主要工作是对整流器Rectifier得到的整流映射bbox(上述与hdmap_bbox匹配的detect_bbox)，识别过程比较简单，针对竖型，横型(不使用)，方型采用不同的检测网络，本质区别在于输入大小不一致。竖型接受的输入大小为96x32，使用白天模型；方型接受的输入大小为64x64，使用夜晚模型。
 
@@ -565,7 +567,7 @@ bool UnityRecognize::RecognizeStatus(const Image &image, const RecognizeOption &
 
 为了确保较高的可靠性，最终的检测结果对应的score必须大于一定的阈值才算有效，否则置为BLACK。阈值由classify_threshold控制，默认为0.5
 
-(3) 校验器 Reviser
+### 3.3 校验器 Reviser
 
 由识别器识别得到的信号灯状态并不一定准确，有时候识别得到信号灯是黑色BLACK，但是实际可能是由红色RED向绿色GREEN装换过程。所以校验器的工作就是利用缓存信息对当前信号灯状态做一个校验。具体的方法比较简单：如果Recognizer是别的是红灯RED或者绿灯GREED，直接存储缓存；如果识别到了黑色BLACK和未知UNKNOWN，则需要从缓存中提取近期时间段内的信号灯状态数据进行比对，进行下一步校验。
 

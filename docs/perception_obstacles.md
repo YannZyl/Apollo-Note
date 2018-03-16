@@ -4,7 +4,7 @@
 
 **初次接触三维重建，如有笔误，欢迎指正!**
 
-## <a name="障碍物感知">障碍物感知: 3D Obstacles Perception</a>
+## 1. 障碍物感知: 3D Obstacles Perception
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_framework.png)
 
@@ -33,7 +33,7 @@ RadarProcessSubnode::OnRadar同样以ROS消息订阅与发布机制触发回调�
 
 FusionSubnode::ProcEvents以自定义ProcEvents+EventManeger消息处理机制，从LidarObjectData和RadarObjectData共享数据容器中提取数据，融合并存储在FusionObjectData共享容器中。
 
-### <a name="激光雷达感知">激光雷达感知 Perception: Lidar Obstacles Perception</a>
+## 2. 激光雷达感知 Perception: Lidar Obstacles Perception
 
 首先对激光雷达障碍物感知模块使用的数据结构做一个简单地分析，其核心数据结构为Object和SensorObject，可以分析这两类数据结构，如下表:
 
@@ -71,9 +71,9 @@ SensorObject继承了Object类，主要数据结构如下：
 
 上图展示了激光雷达处理的4个模块，分别为高精地图ROI过滤器、基于卷积神经网络的障碍物分割、MinBox 障碍物边框构建与HM对象跟踪。接下去将一层层解剖代码，分析各个模块的流程的方法。
 
-#### <a name="高精地图ROI过滤">高精地图ROI过滤器</a>
+### 2.1 高精地图ROI过滤器
 
-高精地图ROI过滤器是回调的第一个过程，从最开始的模块框架图可以看到，LidarProcessSubnode子节点接受的输入数据类型是ROS原始的点云数据类型，sensor_msgs::PointCloud2，简单地看一下这个数据结构，也可以参考官方文档[PointCloud2](http://docs.ros.org/api/sensor_msgs/html/msg/PointCloud2.html)
+高精地图ROI过滤器是回调的第一个过程，该过程处理在ROI之外的激光雷达点，去除背景对象，如路边建筑物和树木等，剩余的点云留待后续处理。从最开始的模块框架图可以看到，LidarProcessSubnode子节点接受的输入数据类型是ROS原始的点云数据类型，sensor_msgs::PointCloud2，简单地看一下这个数据结构，也可以参考官方文档[PointCloud2](http://docs.ros.org/api/sensor_msgs/html/msg/PointCloud2.html)
 
 ```c++
 Header header
@@ -98,7 +98,7 @@ sensor_msgs::PointCloud2与第一个版本sensor_msgs::PointCloud有一些区别
 
 还有一个细节，激光雷达获取的点云是ROS原始的sensor_msgs::PointClouds类型，而实际处理过程中使用的更多的是PCL库的pcl::PointCloud<T>类型，需要在代码中做一个转换，使用pcl_conversions的pcl::fromROSMsg和pcl::toROSMsg函数即可方便的实现相互转换。
 
-**(1) 数据转换与ROI生成**
+#### 2.1.1 数据转换与ROI生成
 
 在进行高精地图ROI过滤的过程中，第一步是接收来自激光雷达的原始点云数据，设备id，时间戳ts等信息，并将其信息存入上述的SensorObject类中。存储过程中代码中值得关注的两个点分别是传感器到世界坐标系的转换矩阵velodyne_trans以及sensor_msgs::PointCloud2到PCL::PointCloud的转换。
 
@@ -197,11 +197,7 @@ header:
 
 - 计算仿射变换矩阵lidar2world_trans，最终两个矩阵相乘得到激光雷达lidar坐标系到世界坐标系的变换矩阵。
 
-**(2) 高精地图ROI过滤器**
-
-高精地图 ROI 过滤器（往下简称“过滤器”）处理在ROI之外的激光雷达点，去除背景对象，如路边建筑物和树木等，剩余的点云留待后续处理。该过程共有三个子过程。
-
-- 坐标变换
+#### 2.1.2 坐标变换
 
 >Apollo官方文档引用：对于(高精地图ROI)过滤器来说，高精地图数据接口被定义为一系列多边形集合，每个集合由世界坐标系点组成有序点集。高精地图ROI点查询需要点云和多边形处在相同的坐标系，为此，Apollo将输入点云和HDMap多边形变换为来自激光雷达传感器位置的地方坐标系。
 
@@ -301,7 +297,7 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 
 **思考：为什么不在车辆坐标系(IMU坐标系)或者lidar坐标系下面进行接下去的分割操作？(这两个坐标系的方向都参考车头的方向，是没有东南西北这些地理位置信息的)。**
 
-- ROI LUT构造与点查询
+#### 2.1.3 ROI LUT构造与点查询
 
 >Apollo官方文档引用：Apollo采用网格显示查找表（LUT），如上图将ROI量化为俯视图2D网格，以此决定输入点是在ROI之内还是之外。如图1所示，该LUT覆盖了一个矩形区域，该区域位于高精地图边界上方，以普通视图周围的预定义空间范围为边界。它代表了与ROI关联网格的每个单元格（如用1/0表示在ROI的内部/外部）。为了计算效率，Apollo使用扫描线算法和位图编码来构建ROI LUT。
 
@@ -433,7 +429,7 @@ void PolygonScanConverter::ConvertScans( std::vector<std::vector<Interval>> *sca
 
 polygon.data: {P1.x, P1.y, P2.x, P2.y ,..., P7.x, P7.y, P8.x, P8.y}
 
-那么接下去我们就需要将这个角点存储形式彻底转换成填充形式，转换的步骤是:
+那么接下去我们就需要将这个角点存储形式彻底转换成填充(点阵)形式，转换的步骤是:
 
 1. 如上图B，DisturbPolygon函数是将polygon里面的坐标，过于靠近网格线(坐标差值在epsion以内)的点稍微推离网格线，原因便于步骤3中处理网格线附近的边，经过推离以后，网格线附近的边要么是不穿过网格线，要么就明显的横穿网络，减少那种差一点就横穿网格线的边，降低判断逻辑。代码中可以很明确的看到这个目的：
 
@@ -442,12 +438,16 @@ polygon.data: {P1.x, P1.y, P2.x, P2.y ,..., P7.x, P7.y, P8.x, P8.y}
 void PolygonScanConverter::DisturbPolygon() {
   for (auto &pt : polygon_) {
     double &x = pt[major_dir_];
-    double d_x = (x - min_x_) / step_;
-    int int_d_x = std::round(d_x);
-    double delta_x = d_x - int_d_x;
+    double d_x = (x - min_x_) / step_;   
+    int int_d_x = std::round(d_x);          // get grid line id
+    double delta_x = d_x - int_d_x;         // compute distance between point and grid line in major direction 
     if (std::abs(delta_x) < kEpsilon) {
-      if (delta_x > 0) { x = (int_d_x + kEpsilon) * step_ + min_x_; } 
-      else { x = (int_d_x - kEpsilon) * step_ + min_x_; }
+      if (delta_x > 0) {                    // point in the right side of the grid line ==> right move fix(E.g. P2, P4)
+        x = (int_d_x + kEpsilon) * step_ + min_x_; 
+      } 
+      else {                                // point in the left side of the grid line ==> left move fix(E.g. P1, P6)
+        x = (int_d_x - kEpsilon) * step_ + min_x_; 
+      }
     }
   }
 }
@@ -465,14 +465,15 @@ slope_: {0.2, 0.8, -4, 0.7, 0.4, -1, 10, 8}
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
 void PolygonScanConverter::ConvertPolygonToSegments() {
   for (size_t i = 0; i < vertices_num; ++i) {
-    const Point &cur_vertex = polygon_[i];                          // first point
-    const Point &next_vertex = polygon_[(i + 1) % vertices_num];    // second point
-    if (cur_vertex[major_dir_] < next_vertex[major_dir_]) {         // store segment which segment_[i].first.x < segment_[i].second.x
+    const Point &cur_vertex = polygon_[i];                          // first point info
+    const Point &next_vertex = polygon_[(i + 1) % vertices_num];    // second point info
+    // store segment which segment_[i].first.x < segment_[i].second.x
+    if (cur_vertex[major_dir_] < next_vertex[major_dir_]) {         
       segments_.emplace_back(cur_vertex, next_vertex);
     } else {
       segments_.emplace_back(next_vertex, cur_vertex);
     }
-    // compute k
+    // compute slope k
     double x_diff = next_vertex[major_dir_] - cur_vertex[major_dir_];    
     double y_diff = next_vertex[op_major_dir_] - cur_vertex[op_major_dir_];
     std::abs(cur_vertex[major_dir_] - next_vertex[major_dir_]) < kEpsilon
@@ -530,7 +531,7 @@ void PolygonScanConverter::UpdateActiveEdgeTable(
   size_t valid_edges_num = active_edge_table_.size();
   size_t invalid_edges_num = 0;
   // For each edege in active edge table, check whether it is still valid.
-  // Stage 1, compute next interaction with later grid line, if out the line, erase
+  // Stage 1, compute next interaction with later grid line, if out the line, erase in step3 by setting the slope infinite
   for (auto &edge : active_edge_table_) {
     if (!edge.MoveUp(step_)) {
       --valid_edges_num;
@@ -567,7 +568,7 @@ void PolygonScanConverter::UpdateActiveEdgeTable(
 
 根据代码段我暂时将ROI区间计算分为4个阶段，第一个阶段就是3中所讨论的问题，前面每条边开始已知跟后一条x_id-1网格线的交点，那么这些边跟后续网格线x_id, x_id+1的交点怎么计算(计算如上图的E13，E53)，这里通过MoveUp(step_)函数向后推演一个step_计算，函数跟上面讲得一致，最后返回时候超过边最大x,超过则丢弃，不超过保留。第二阶段增加是否有新的边由步骤3中直接计算得到(新加入如上图的E1-E7,)；第三阶段就是按照次方向y的值从小到大排列，并删除超出边的那些点；最后一个阶段就是计算落入多边形与id_x网格线相交的区间，
 
-经过BCDE四步骤，就能将基于定点存储形式的路口与路面坐标转化成填充形式。最后得到的结果是vector<std::vector<Interval>> \*scans_intervals形式的扫描结果，2D向量，每行对应一个扫描线；每行的vector存储对应网格线的路面ROI区间。最后就只要把scans_intervals这个扫描结果转换成bitmap的填充就行了，也就是将scans_intervals放入bitmap_的即可。填充部分，代码相对比较简单，这里就省略了，可能以64位bit的形式进行存储有点点让人费解，不过没关系，相信有C++数据结构基础的你一定能理解。
+经过BCDE四步骤，就能将基于定点存储形式的路口与路面坐标转化成填充(点阵)形式。最后得到的结果是vector<std::vector<Interval>> \*scans_intervals形式的扫描结果，2D向量，每行对应一个扫描线；每行的vector存储对应网格线的路面ROI区间。最后就只要把scans_intervals这个扫描结果转换成bitmap的点阵就行了，也就是将scans_intervals放入bitmap_的即可。填充部分，代码相对比较简单，这里就省略了，可能以64位bit的形式进行存储有点点让人费解，不过没关系，相信有C++数据结构基础的你一定能理解。
 
 最后要做的就是对原始点云cloud_local进行处理，标记点云中哪些点在ROI以外，哪些点在ROI以内，ROI区域内的点云可以供下一步行人，车辆等物体分割。
 
@@ -602,7 +603,7 @@ bool Bitmap2D::Check(const Eigen::Vector2d& p) const {
   Eigen::Matrix<size_t, 2, 1> major_grid_pt(grid_pt[dir_major_], grid_pt[op_dir_major_]);
 
   size_t x_id = major_grid_pt.x();
-  size_t block_id = major_grid_pt.y() >> 6;  // major_grid_pt.y() / 64
+  size_t block_id = major_grid_pt.y() >> 6;  // major_grid_pt.y() / 64, which grid line
   size_t bit_id = major_grid_pt.y() & 63;    // major_grid_pt.y() % 64
 
   const uint64_t& block = bitmap_[x_id][block_id];
@@ -618,5 +619,19 @@ bool Bitmap2D::Check(const Eigen::Vector2d& p) const {
 
 1. 高精地图查询，获得路面路口的polygons多边形信息
 2. 点云坐标变换。将原始点云cloud从lidar坐标系转到ENU局部坐标系cloud_local；polygons从世界坐标系转到ENU局部坐标系polygons_local；
-3. 将顶点存储形式的路面路口polygon信息，转换成填充形式的存储方式。扫描线算法转换，bitmap存储
+3. 将顶点存储形式的路面路口polygon信息，转换成填充(点阵)形式的存储方式。扫描线算法转换，bitmap存储
 4. 根据ROI LUT查询表，标记原始点云cloud_local是否在ROI内或外面。
+
+### 2.2 基于卷积神经网络分割
+
+>高精地图 ROI过滤之后，Apollo得到已过滤、只包含属于ROI内的点云，大部分背景障碍物，如路侧的建筑物、树木等均被移除，ROI内的点云被传递到分割模块。分割模块检测和划分前景障碍物，例如汽车，卡车，自行车和行人。
+
+该阶段的输入数据来自高精地图ROI过滤器过滤得到的电云数据，最终输出对应于ROI中的障碍物对象数据集。该阶段包含4个子过程：
+
+- 通道特征提取
+- 给予卷积神经网络的障碍物预测
+- 障碍物集群
+- 后期处理
+
+#### 2.2.1 通道特征提取
+
