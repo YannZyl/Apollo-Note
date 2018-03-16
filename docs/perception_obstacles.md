@@ -2,7 +2,7 @@
 
 本文档结合代码详细地解释感知模块中障碍物感知的流程与功能，也可以官方参考文档([Apollo 2.0 Obstacles Perception](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/3d_obstacle_perception_cn.md))
 
-<span style="color:red;">初次接触三维重建，如有笔误，欢迎指正!</span>
+**初次接触三维重建，如有笔误，欢迎指正!**
 
 ## <a name="障碍物感知">障碍物感知: 3D Obstacles Perception</a>
 
@@ -75,7 +75,7 @@ SensorObject继承了Object类，主要数据结构如下：
 
 高精地图ROI过滤器是回调的第一个过程，从最开始的模块框架图可以看到，LidarProcessSubnode子节点接受的输入数据类型是ROS原始的点云数据类型，sensor_msgs::PointCloud2，简单地看一下这个数据结构，也可以参考官方文档[PointCloud2](http://docs.ros.org/api/sensor_msgs/html/msg/PointCloud2.html)
 
-```
+```c++
 Header header
 
 # 2D structure of the point cloud. If the cloud is unordered, height is
@@ -102,7 +102,7 @@ sensor_msgs::PointCloud2与第一个版本sensor_msgs::PointCloud有一些区别
 
 在进行高精地图ROI过滤的过程中，第一步是接收来自激光雷达的原始点云数据，设备id，时间戳ts等信息，并将其信息存入上述的SensorObject类中。存储过程中代码中值得关注的两个点分别是传感器到世界坐标系的转换矩阵velodyne_trans以及sensor_msgs::PointCloud2到PCL::PointCloud的转换。
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
 void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
   ...
@@ -120,7 +120,7 @@ void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) 
 
 当获得原始的点云数据并转换成PCL格式以后，下一步需要从点云中检索ROI区域，这些ROI区域包含路面与路口的驾驶区域。
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
 void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
   /// get velodyne2world transfrom
