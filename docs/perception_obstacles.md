@@ -615,6 +615,51 @@ bool Bitmap2D::Check(const Eigen::Vector2d& p) const {
 
 从上面代码中不难看到其实针对每个基于ENU局部坐标系的点云cloud，根据其x和y去bitmap里面做check，第一check该点是否落在这个网格里面(x:[-range,range], y:[-range,range])，这个检查由isExist函数完成；第二个check，如果该点在LUT网格内，那么check这个点是否在路面ROI内，只要检查其对应的网格坐标去bitmap查询即可，1表示在路面；0表示在路面外，这个检查由Check函数完成。最后cloud点云中每个点是否在路面ROI内全部记录在roi_indices_ptr内，里面本质就是一个向量，大小跟cloud里面的点云数量相等，结果一一对应。
 
+#### 2.1.4 点云筛选
+
+高地图ROI过滤器最后一步就是过滤工作，去除背景点云(ROI区域以外点云)，便于下一步物体分割。点云筛选由PCL库pcl::copyPointCloud函数实现，roi_indices存储ROI区域内点云的id。
+
+```c++
+/// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
+void LidarProcessSubnode::OnPointCloud(
+  /// call roi_filter
+  PointCloudPtr roi_cloud(new PointCloud);
+  if (roi_filter_ != nullptr) {
+    PointIndicesPtr roi_indices(new PointIndices);
+    ROIFilterOptions roi_filter_options;
+    roi_filter_options.velodyne_trans = velodyne_trans;
+    roi_filter_options.hdmap = hdmap;
+    if (roi_filter_->Filter(point_cloud, roi_filter_options,roi_indices.get())) {
+      pcl::copyPointCloud(*point_cloud, *roi_indices, *roi_cloud);
+      roi_indices_ = roi_indices;
+    } else {
+      ...
+    }
+  }
+}
+
+/// PCL
+template <typename PointT> void
+pcl::copyPointCloud (const pcl::PointCloud<PointT> &cloud_in, 
+                     const pcl::PointIndices &indices,
+                     pcl::PointCloud<PointT> &cloud_out)
+{
+  // Do we want to copy everything?
+  if (indices.indices.size () == cloud_in.points.size ())
+  {
+    cloud_out = cloud_in;
+    return;
+  }
+
+  // Allocate enough space and copy the basics
+  ...
+ 
+  // Iterate over each point
+  for (size_t i = 0; i < indices.indices.size (); ++i)
+    cloud_out.points[i] = cloud_in.points[indices.indices[i]];
+}
+```
+
 最后总结一下高精地图ROI的过程：
 
 1. 高精地图查询，获得路面路口的polygons多边形信息
@@ -629,7 +674,7 @@ bool Bitmap2D::Check(const Eigen::Vector2d& p) const {
 该阶段的输入数据来自高精地图ROI过滤器过滤得到的电云数据，最终输出对应于ROI中的障碍物对象数据集。该阶段包含4个子过程：
 
 - 通道特征提取
-- 给予卷积神经网络的障碍物预测
+- 基于卷积神经网络的障碍物预测
 - 障碍物集群
 - 后期处理
 
