@@ -33,7 +33,7 @@ RadarProcessSubnode::OnRadar同样以ROS消息订阅与发布机制触发回调�
 
 FusionSubnode::ProcEvents以自定义ProcEvents+EventManeger消息处理机制，从LidarObjectData和RadarObjectData共享数据容器中提取数据，融合并存储在FusionObjectData共享容器中。
 
-### <a name="激光雷达感知">激光雷达感知 Perception: Lidar Obstacles PErception</a>
+### <a name="激光雷达感知">激光雷达感知 Perception: Lidar Obstacles Perception</a>
 
 首先对激光雷达障碍物感知模块使用的数据结构做一个简单地分析，其核心数据结构为Object和SensorObject，可以分析这两类数据结构，如下表:
 

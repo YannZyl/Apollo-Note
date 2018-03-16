@@ -62,7 +62,7 @@
 
 在图像坐标系中，HD Map查询得到的交通信号灯结果可以表示为<灯id，标定框>的一个组合，标定框由边界上的4个点组成，每个点坐标为(x,y,z)，而映射到摄像头中的2D图像坐标系，每个点坐标为(x,y)。那么交通信号灯singal info可以以数学的方式表示为(只要给定车辆位置，可以通过高精地图HD Map查询4个点的世界坐标系)：
 
-```
+```c++
 signal info:
 id {
   id: "xxx"
@@ -84,7 +84,7 @@ boundary {
 
 分析信号灯预处理子节点的回调函数，两个函数对别对应长焦与广角相机的图像预处理：
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc 
 void TLPreprocessorSubnode::SubLongFocusCamera(const sensor_msgs::Image &msg)
 void TLPreprocessorSubnode::SubShortFocusCamera(const sensor_msgs::Image &msg)
@@ -92,7 +92,7 @@ void TLPreprocessorSubnode::SubShortFocusCamera(const sensor_msgs::Image &msg)
 
 可以看到两个订阅的topic产生的输入是ROS自带sensor_msgs的Image类型，查看[官方文档](http://docs.ros.org/api/sensor_msgs/html/msg/Image.html)。可知Image类包含如下信息：
 
-```
+```c++
 # This message contains an uncompressed image
 # (0, 0) is at top-left corner of image
 #
@@ -109,7 +109,7 @@ uint8[] data          # actual matrix data, size is (step * rows)
 
 从文档中得知，对ROS的sensor_msgs::Image访问，可以通过height，width和data来获取图像数据。代码中需要将ROS的sensor_msgs类型的Image转换成opencv的Image类，该类在包含的关键数据为：
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/base/image.h
 class Image {
  public:
@@ -130,7 +130,7 @@ typedef std::shared_ptr<Image> ImageSharedPtr;
 
 同时还存在的相关数据结构有LightRegion, LightStatus, Light, ImageLights，可以进一步分析这些数据结构
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/base/light.h
 struct LightRegion {
   // roi is marked by map & projection, it may be too large or not accuracy.
@@ -175,7 +175,7 @@ typedef std::shared_ptr<ImageLights> ImageLightsPtr;
 
 - 如果上一次查询距离当前时间很近(小于一个阈值，配置文件设定为0.2s，低频率调用)，则跳过本次相机选择，沿用上一次相机id对应的配置。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc
 void TLPreprocessorSubnode::CameraSelection(double ts) {
   const double current_ts = TimeUtil::GetCurrentTime();
@@ -195,7 +195,7 @@ float_params {
 
 - 获取车辆位置信息(使用ROS的tf，可以参考wiki的[tf_tutorials](http://wiki.ros.org/tf/Tutorials#Learning_tf))，同时根据车辆信息查询高精地图，获取信号灯等信息.(该部分与定位模块&&高精地图模块相关)。使用定位信息和高精地图查询到的信号灯信息，并对综合信息进行缓存并且将高精地图产生的3D世界坐标洗映射到2D图像坐标系(缓存信息包含：摄像头id，Hdmap得到的图像，信号灯信息等等)。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc
 void TLPreprocessorSubnode::CameraSelection(double ts) {
   // get car pose and traffic light signals
@@ -238,7 +238,7 @@ E.g. 如果signal A坐标系映射后标定框在长焦摄像头下但不在广�
 
 E.g. 如果signal B坐标系映射后标定框同时存在长焦摄像头和广角摄像头下，那么可以将signal B保存在lights_on_image[0]下，同时复制一份保存在lights_on_image[1]，0号索引代表长焦摄像头，1号索引代表广角摄像头。
 
-```
+```c++
 void TLPreprocessor::SelectImage(const CarPose &pose,
                                  const LightsArray &lights_on_image_array,
                                  const LightsArray &lights_outside_image_array,
@@ -287,7 +287,7 @@ b) 经过a)步骤的处理，可以得到若干摄像头，这些摄像头存在
 
 针对这个确认过程，我们只有HD Map查询得到的3D信号灯世界坐标信息，汽车姿态以及本次回调对应的camera id。由于没有执行CameraSelection，因此既不知道这些信号灯的2D图像坐标系信息，也不知道最终使用哪个摄像头。所以需要通过SyncImage查询缓存来确定最终使用的camera。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_preprocessor_subnode.cc
 void TLPreprocessorSubnode::SubCameraImage(boost::shared_ptr<const sensor_msgs::Image> msg, CameraId camera_id) {
   if (!preprocessor_.SyncImage(image, &image_lights, &should_pub)) {
@@ -328,7 +328,7 @@ bool TLPreprocessor::SyncImage(const ImageSharedPtr &image, ImageLightsPtr *imag
 
 当二次验证也通过时，就可以发布信息给Process阶段进行后续处理。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/preprocessor/tl_preprocessor.cc
 void TLPreprocessorSubnode::SubCameraImage(boost::shared_ptr<const sensor_msgs::Image> msg, CameraId camera_id) {
   ...
@@ -380,7 +380,7 @@ bool TLPreprocessorSubnode::AddDataAndPublishEvent(
 - 首先，将映射的标定框中心点固定，宽高以一定的scale扩大(Apollo中由crop_scale控制，默认2.5倍)得到更大的ROI区域(图中黄色区域)，这个ROI区域非常大概率的包含了信号灯
 - 然后，使用检测网络(ResNet-RFCN)从这个ROI区域中检测得到信号灯的真实坐标。由于ROI相对较小，检测速度比较快。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
 bool TLProcSubnode::ProcEvent(const Event &event) {
   // get data from sharedata which pulish by Preprocess SubNode
@@ -398,7 +398,7 @@ bool TLProcSubnode::ProcEvent(const Event &event) {
 
 整流环节输入包含检测使用的摄像头id，映射过后的2D图像坐标系信号灯标定框，摄像头拍摄到的真实路况图像。这些图像都是从共享数据ShareData容器类中获得，而发布这些信息的就是ProProcess SubNode，上小节可以得知。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/rectify/unity_rectify.cc
 bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std::vector<LightPtr> *lights) {
   for (auto &light : lights_ref) {
@@ -430,7 +430,7 @@ void CropBox::GetCropBox(const cv::Size &size, const std::vector<LightPtr> &ligh
 
 从上面代码就可以不难理解Apollo对于每个映射过后的信号灯坐标漂移问题处理方式，最终使用crop_scale扩大标定框得到ROI区域，接下来就是使用检测网络对该区域进行信号灯检测。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/rectify/unity_rectify.cc
 bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std::vector<LightPtr> *lights) {
   for (auto &light : lights_ref) {
@@ -460,7 +460,7 @@ bool UnityRectify::Rectify(const Image &image, const RectifyOption &option, std:
 	- QUADRATE_CLASS: 方型信号灯
 	- HORIZONTAL_CLASS: 横型信号灯
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/rectify/select.cc
 void GaussianSelect::Select(const cv::Mat &ros_image,
                             const std::vector<LightPtr> &hdmap_bboxes,
@@ -518,7 +518,7 @@ void GaussianSelect::Select(const cv::Mat &ros_image,
 
 识别器主要工作是对整流器Rectifier得到的整流映射bbox(上述与hdmap_bbox匹配的detect_bbox)，识别过程比较简单，针对竖型，横型(不使用)，方型采用不同的检测网络，本质区别在于输入大小不一致。竖型接受的输入大小为96x32，使用白天模型；方型接受的输入大小为64x64，使用夜晚模型。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
 bool TLProcSubnode::ProcEvent(const Event &event) {
   // get data from sharedata which pulish by Preprocess SubNode
@@ -571,7 +571,7 @@ bool UnityRecognize::RecognizeStatus(const Image &image, const RecognizeOption &
 
 另外一个先验，信号灯变换总是有一定规律的，一般是红RED-绿GREED-黄YELLOW，反复循环。如果缓存中上时刻监测到的是红色RED，而现在时刻确实YELLOW，这是不可能的，所以刷新状态变为红色RED，直到检测到信号灯状态变为绿色GREEN才能前进。
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
 bool TLProcSubnode::ProcEvent(const Event &event) {
   // get data from sharedata which pulish by Preprocess SubNode
