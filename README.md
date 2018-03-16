@@ -37,8 +37,10 @@ Links:
 - Apollo坐标系研究(待完善)
 - Apollo代码宏介绍(待完善)
 
-Supplements：
+References：
 
 - 相机标定 Camera Calibration(待完善)
-- ROS::tf坐标PointCloud系转换(待完善)
-- PointCloud点云介绍(待完善)
+- [ROS tf坐标系介绍](http://wiki.ros.org/tf/Tutorials#Learning_tf)
+- [ROS tf坐标系转换Demo](http://wiki.ros.org/navigation/Tutorials/RobotSetup/TF)
+- [ROS && PCL PointCloud点云介绍](http://wiki.ros.org/pcl/Overview)
+- [扫描线算法](https://www.jianshu.com/p/d9be99077c2b)

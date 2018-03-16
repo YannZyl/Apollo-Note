@@ -521,7 +521,7 @@ bool PolygonScanConverter::ConvertSegmentToEdge(const size_t seg_id, std::pair<i
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_roi_lut2.png)
 
-4. 如上图E，第一个问题"计算E有什么用?" 首先我们要知道一个问题：如果多边形只包含凸或者凹行，那么网格线穿过多边形，如何计算落在多边形ROI里面的区间？只要计算多边形和改网格线的交点，然后按照y的大小从小到大排列，必定是2n的交点{P1,P2,P3,...,P2n}，那么落入多边形的区间肯定是[P1.y,P2.y] [P3.y, P4.y], .. , [P2n-1.y, P2n.y]。这个可以从上图证实。那么对于3中的交点E可以排序，两两组合最终得到路面与路口区域落在该网格线上的区间。这部分代码有点难，可以慢慢体会：
+4. 如上图E，第一个问题"计算E有什么用?" 首先我们要知道一个问题：如果多边形只包含凸或者凹，那么网格线穿过多边形，如何计算落在多边形ROI里面的区间？只要计算多边形和该网格线的交点，然后按照y的大小从小到大排列，必定是2n的交点{P1,P2,P3,...,P2n}，那么落入多边形的区间肯定是[P1.y,P2.y] [P3.y, P4.y], .. , [P2n-1.y, P2n.y]。这个可以从上图证实。那么对于3中的交点E可以排序，两两组合最终得到路面与路口区域落在该网格线上的区间。这部分代码有点难，可以慢慢体会：
 
 ```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
