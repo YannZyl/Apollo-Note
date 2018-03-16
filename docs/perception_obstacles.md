@@ -144,7 +144,7 @@ void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) 
 
 简单分析一下GetVelodyneTrans函数，这个函数功能是产生lidar坐标系到世界坐标系的变换矩阵。实现过程我们可以先简要的看一下在做功能分析：
 
-```
+```c++
 /// file in apollo/modules/perception/onboard/transform_input.cc
 bool GetVelodyneTrans(const double query_time, Eigen::Matrix4d* trans) {
   ...
@@ -172,7 +172,7 @@ bool GetVelodyneTrans(const double query_time, Eigen::Matrix4d* trans) {
 点云数据由lidar获取，所以数据都是以激光雷达lidar参考系作为标准参考系，在查询高精地图的时候需要世界坐标系坐标。因此获取变换矩阵分为两步，第一步获取激光雷达lidar坐标系到惯测单元IMU坐标系的变换矩阵；第二步，获取惯测单元IMU坐标系到世界坐标系变换矩阵。从上述的代码中我们明显可以看到有两部分相似度很高的代码组成:
 
 - 计算仿射变换矩阵lidar2novatel_trans，激光雷达lidar坐标系到惯测IMU坐标系(车辆坐标系)变换矩阵。这个矩阵虽然通过ROS的tf模块调用lookupTransform函数计算完成，但是实际是外参决定，在运行过程中保持不变。
-```
+```c++
 /// file in apollo/modules/localization/msf/params/velodyne_params/velodyne64_novatel_extrinsics_example.yaml
 child_frame_id: velodyne64
 transform:
@@ -207,7 +207,7 @@ header:
 
 这个阶段使用到的变换矩阵就是以上的lidar2world_trans矩阵。看了官方说明，并配合具体的代码，可能会存在一些疑惑。这里给出一些变换的研究心得。坐标变换的实现是在HdmapROIFilter::Filter函数中完成。具体的变换过程如下：
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/hdmap_roi_filter.cc
 bool HdmapROIFilter::Filter(const pcl_util::PointCloudPtr& cloud,
                             const ROIFilterOptions& roi_filter_options,
@@ -237,7 +237,7 @@ void HdmapROIFilter::TransformFrame(
 
 注意点2: 输入的cloud是基于lidar坐标系的点云数据，而下面代码还需要转换成cloud_local、polygons_local，按照注释解释是局部坐标系，那么这个局部坐标系到底是什么坐标系？如果看得懂TransformFrame函数，可以不难发现：**这个所谓"local coordinate system"，其实跟lidar坐标系很相近，他表示以lidar为原点的ENU坐标系**，这个坐标系是以X(东)-Y(北)-Z(天)为坐标轴的二维投影坐标系。在TransformFrame函数中，
 
-```
+```c++
   Eigen::Vector3d vel_location = vel_pose.translation();
   Eigen::Matrix3d vel_rot = vel_pose.linear();
   Eigen::Vector3d x_axis = vel_rot.row(0);
@@ -246,7 +246,7 @@ void HdmapROIFilter::TransformFrame(
 
 vel_location是lidar坐标系相对世界坐标系的平移成分，vel_rot则是lidar坐标系相对世界坐标系的旋转矩阵。那么从lidar坐标系到世界坐标系的坐标变换其实很简单，假设在lidar坐标系中有一个坐标点P(x1,y1,z1)，那么该点在世界坐标系下的坐标P_hat为: P_hat = vel_rot * P + vel_location. 了解了这个变换，接下来观察cloud和polygons的变换代码：
 
-```
+```c++
   polygons_local->resize(polygons_world.size());
   for (size_t i = 0; i < polygons_local->size(); ++i) {
     const auto& polygon_world = polygons_world[i];
@@ -264,7 +264,7 @@ vel_location是lidar坐标系相对世界坐标系的平移成分，vel_rot则�
 P_world = vel_rot * P_local + translation 
 当vel_rot旋转成分为0时: P_local = P_world - translation
 
-```
+```c++
   cloud_local->resize(cloud->size());
   for (size_t i = 0; i < cloud_local->size(); ++i) {
     const auto& pt = cloud->points[i];
@@ -279,7 +279,7 @@ P_world = vel_rot * P_local + translation
 
 另外补充一点猜测世界坐标系也是ENU类型坐标系的证据：
 
-```
+```c++
 /// file in apollo/modules/perception/traffic_light/onboard/hdmap_input.cc
 bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::hdmap::Signal> *signals) {
   auto hdmap = HDMapUtil::BaseMapPtr();
@@ -330,7 +330,7 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 
 现在明白了ROI LUT的作用，接下去我们将从代码一步步了解Apollo采用的方案。上面小节讲到使用TransformFrame函数完成原始点云到局部ENU坐标系点云的转换以后得到了cloud_local映射原点云，polygons_local映射路面与路口多边形信息。接下来做的工作就是根据polygons_local构建ROI LUT。构建的过程在FilterWithPolygonMask函数中开启。
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/hdmap_roi_filter.cc
 bool HdmapROIFilter::Filter(const pcl_util::PointCloudPtr& cloud,
                             const ROIFilterOptions& roi_filter_options,
@@ -366,7 +366,7 @@ bool HdmapROIFilter::FilterWithPolygonMask(
 
 可以看到构建的过程总共分为3部分(其实2,3就能完成构建；4只是check，分类cloud_local中在路面ROI内和外的点云)，接下来逐个分析流程，第2步求polygons_local的主方向比较简单，只要计算多边形点云集合中，x/东西方向与y/南北方向最大值与最小值的差，差越大跨度越大。选择跨度小的方向作为主方向。(这部分代码比较简单，所以不再贴出来)。
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/bitmap2d.cc
 Bitmap2D::Bitmap2D(const Eigen::Vector2d& min_p, const Eigen::Vector2d& max_p, const Eigen::Vector2d& grid_size, DirectionMajor dir_major) {
   dir_major_ = dir_major;
@@ -388,7 +388,7 @@ void Bitmap2D::BuildMap() {
 
 难点是DrawPolygonInBitmap函数，这也是主要工作完成的函数，在这个函数里面，会真正的构建ROI LUT。我们接着分析他的实现代码：
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_mask.cc
 void DrawPolygonInBitmap(const typename PolygonScanConverter::Polygon& polygon, const double extend_dist, Bitmap2D* bitmap) {
   ...
@@ -437,7 +437,7 @@ polygon.data: {P1.x, P1.y, P2.x, P2.y ,..., P7.x, P7.y, P8.x, P8.y}
 
 1. 如上图B，DisturbPolygon函数是将polygon里面的坐标，过于靠近网格线(坐标差值在epsion以内)的点稍微推离网格线，原因便于步骤3中处理网格线附近的边，经过推离以后，网格线附近的边要么是不穿过网格线，要么就明显的横穿网络，减少那种差一点就横穿网格线的边，降低判断逻辑。代码中可以很明确的看到这个目的：
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
 void PolygonScanConverter::DisturbPolygon() {
   for (auto &pt : polygon_) {
@@ -461,7 +461,7 @@ slope_: {0.2, 0.8, -4, 0.7, 0.4, -1, 10, 8}
 
 这里segment_里面每个元素两个点存储的顺序依赖其主方向上的坐标值，永远是后面一个点的坐标比前面一个点的坐标大。segment_[n].first.x < segment_[n].second.x，在代码中也相对比较简单。
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
 void PolygonScanConverter::ConvertPolygonToSegments() {
   for (size_t i = 0; i < vertices_num; ++i) {
@@ -482,7 +482,7 @@ void PolygonScanConverter::ConvertPolygonToSegments() {
 ```
 3. 如上图D，根据主方向上的valid_range(最大坐标和最小坐标差值)，以及网格线间距grid_size，画出valid_range/grid_size条网格线，然后根据segment_里面的两个点计算每条边跟其后面的网格线的第一个交点E。这里计算E有什么用？为什么只计算第一个交点E，而不计算边S和所有网格线可能的交点？
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
 bool PolygonScanConverter::ConvertSegmentToEdge(const size_t seg_id, std::pair<int, Edge> *out_edge) {
   const Segment &segment = segments_[seg_id];
@@ -523,7 +523,7 @@ bool PolygonScanConverter::ConvertSegmentToEdge(const size_t seg_id, std::pair<i
 
 4. 如上图E，第一个问题"计算E有什么用?" 首先我们要知道一个问题：如果多边形只包含凸或者凹行，那么网格线穿过多边形，如何计算落在多边形ROI里面的区间？只要计算多边形和改网格线的交点，然后按照y的大小从小到大排列，必定是2n的交点{P1,P2,P3,...,P2n}，那么落入多边形的区间肯定是[P1.y,P2.y] [P3.y, P4.y], .. , [P2n-1.y, P2n.y]。这个可以从上图证实。那么对于3中的交点E可以排序，两两组合最终得到路面与路口区域落在该网格线上的区间。这部分代码有点难，可以慢慢体会：
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
 void PolygonScanConverter::UpdateActiveEdgeTable(
     const size_t x_id, std::vector<Interval> \*scan_intervals) {
@@ -571,7 +571,7 @@ void PolygonScanConverter::UpdateActiveEdgeTable(
 
 最后要做的就是对原始点云cloud_local进行处理，标记点云中哪些点在ROI以外，哪些点在ROI以内，ROI区域内的点云可以供下一步行人，车辆等物体分割。
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/roi_filter/hdmap_roi_filter/polygon_scan_converter.cc
 bool HdmapROIFilter::Bitmap2dFilter(const pcl::PointCloud<pcl_util::Point>::ConstPtr in_cloud_ptr,
     const Bitmap2D& bitmap, pcl_util::PointIndices* roi_indices_ptr) {
