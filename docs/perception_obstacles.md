@@ -760,7 +760,7 @@ bool CNNSegmentation::Segment(const pcl_util::PointCloudPtr& pc_ptr,
 
 从上面代码可以看出，与高精地图ROI过滤器一样，所有的分割操作都在CNNSegmentation这个类里面完成。接下来我们从代码入手，看看怎么样从一个点云的集合{(x,y,z,i)}得到上述8类数据，最终由cloud_local映射过后的点云集合会生成一个[1,8,w,h]的矩阵作为CNN的输入，其中w和h在外部文件中定义，都为512。这里的use_full_cloud_标志其实是处理原始点云or处理roi点云(去掉背景)，默认使用原始点云use_full_cloud_=true。
 
-**这里有一个注意点，原始点云的x和y都有他的范围，即激光雷达的感知范围。有这么一个前提：其实事实上激光雷达检测到360度范围内的点云，如果点云离激光雷达lidar太远，那么这些点其实没必要去处理，处理车辆附近的点云(E.g. 60米范围内)，即可以节省计算资源，降又能低复杂度。而这个筛选的范围由参数point_cloud_range参数控制，默认60米**
+**这里有一个注意点，原始点云的x和y都有他的范围，即激光雷达的感知范围。有这么一个前提：其实事实上激光雷达检测到360度范围内的点云，如果点云离激光雷达lidar太远，那么这些点其实没必要去处理，处理车辆附近的点云(E.g. 60米范围内)，即可以节省计算资源，又能降低复杂度。而这个筛选的范围由参数point_cloud_range参数控制，默认60米**
 
 (1) 将点云实际的xy坐标映射到输入矩阵HxW平面坐标，并且筛选点云高度
 
@@ -782,7 +782,7 @@ void FeatureGenerator<Dtype>::Generate(const apollo::perception::pcl_util::Point
   float inv_res_y = 0.5 * static_cast<float>(height_) / static_cast<float>(range_);  // E.g.2 inv_res_x == c/2a(a=range_, c=widht_)
 
   for (size_t i = 0; i < points.size(); ++i) {
-  	// 1. remove the cloud points which height is out of the interval [-5.0,5.0]
+    // 1. remove the cloud points which height is out of the interval [-5.0,5.0]
     if (points[i].z <= min_height_ || points[i].z >= max_height_) {          
       map_idx_[i] = -1;
       continue;
@@ -806,7 +806,7 @@ inline int F2I(float val, float ori, float scale) {        // compute mapping co
 
 从上面代码很容易的看到这个映射过程，以及两个筛选流程：
 
-- 去除高度在5米以上或者-5米以下的点云。信号灯高度差不多在5米以下，因此5米以上可能是建筑物之类的无效点云，可以出去
+- 去除高度在5米以上或者-5米以下的点云。信号灯高度差不多在5米以下，因此5米以上可能是建筑物之类的无效点云，可以去除
 - 去除xy在60米以外的点云。范围过大，离车过远的点云，即使包含物体，也没必要检测。
 
 (2) 计算单元格中的8类数据
@@ -842,7 +842,7 @@ void FeatureGenerator<Dtype>::Generate(const apollo::perception::pcl_util::Point
     }
     mean_height_data_[idx] += static_cast<Dtype>(pz);    // accumulated  mean_height_data
     mean_intensity_data_[idx] += static_cast<Dtype>(pi); // accumulated mean_intensity_data
-    count_data_[idx] += Dtype(1);					// compute count_data(channel 5)
+    count_data_[idx] += Dtype(1);                        // compute count_data(channel 5)
   }
 
   for (int i = 0; i < siz; ++i) {
