@@ -201,6 +201,32 @@ header:
 
 >Apollo官方文档引用：对于(高精地图ROI)过滤器来说，高精地图数据接口被定义为一系列多边形集合，每个集合由世界坐标系点组成有序点集。高精地图ROI点查询需要点云和多边形处在相同的坐标系，为此，Apollo将输入点云和HDMap多边形变换为来自激光雷达传感器位置的地方坐标系。
 
+```c++
+/// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
+void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
+  /// get velodyne2world transfrom
+  ...
+  /// call hdmap to get ROI
+  ...
+  /// call roi_filter
+  PointCloudPtr roi_cloud(new PointCloud);
+  if (roi_filter_ != nullptr) {
+    PointIndicesPtr roi_indices(new PointIndices);
+    ROIFilterOptions roi_filter_options;
+    roi_filter_options.velodyne_trans = velodyne_trans;
+    roi_filter_options.hdmap = hdmap;
+    if (roi_filter_->Filter(point_cloud, roi_filter_options, roi_indices.get())) {
+      pcl::copyPointCloud(*point_cloud, *roi_indices, *roi_cloud);
+      roi_indices_ = roi_indices;
+    } else {
+      ...
+    }
+  }
+}
+```
+
+坐标转换和接下去ROI LUT构造与点查询的步骤都在HdmapROIFilter这个类里面完成。
+
 这个阶段使用到的变换矩阵就是以上的lidar2world_trans矩阵。看了官方说明，并配合具体的代码，可能会存在一些疑惑。这里给出一些变换的研究心得。坐标变换的实现是在HdmapROIFilter::Filter函数中完成。具体的变换过程如下：
 
 ```c++
@@ -257,6 +283,9 @@ vel_location是lidar坐标系相对世界坐标系的平移成分，vel_rot则�
 
 开始的时候也是很奇怪，为什么最后变换的形式是P_local = P_world - translation. 后来经过研究猜测(有待后续深入阅读证实)路口和路面多边形信息只经过平移达到新的局部ENU坐标系，可以推测其实世界坐标系也是ENU坐标系，所以两个坐标系之间没有旋转成分，直接移除平移就可以从世界坐标系变换到局部ENU坐标系。
 
+
+**注意其实变换前后polygons_world和polygons_local的高度z是变化的，但是由于polygons被用来做2D投影网格LUT构建，所以对高度z这一维度并不关心，这些就不做z的变化；另外强度i始终不会变化。**
+
 P_world = vel_rot * P_local + translation 
 当vel_rot旋转成分为0时: P_local = P_world - translation
 
@@ -272,6 +301,8 @@ P_world = vel_rot * P_local + translation
 ```
 
 上述cloud变换代码再次验证了世界坐标系也是ENU坐标系类型的说法，局部ENU坐标系和lidar坐标系共原点但存在一个旋转角度，lidar坐标系到世界坐标系变换的旋转矩阵是vel_rot，那么到局部ENU坐标系的旋转矩阵也应该是vel_rot；其次共原点说明两个坐标系的平移矩阵其实是0。最终变换到局部ENU坐标系的公式就是：P_hat = vel_rot * P + 0。也就是上面看到的公式。
+
+**注意这里为什么只进行x和y坐标的转换，而没有进行高度z和强度i的转换？首先强度在任何坐标系下都是一样的，所以不用进行转换。其次cloud从lidar坐标系转换到以lidar为原点的ENU局部坐标系cloud_local，只有旋转没有平移成分，因为原点一样，xy轴构成的平面是同一个平面，所以高度是一样的，不需要变换z。**
 
 另外补充一点猜测世界坐标系也是ENU类型坐标系的证据：
 
@@ -679,4 +710,161 @@ pcl::copyPointCloud (const pcl::PointCloud<PointT> &cloud_in,
 - 后期处理
 
 #### 2.2.1 通道特征提取
+
+给定一个点云框架(cloud_roi)，Apollo在地方坐标系中构建俯视图（即投影到X-Y平面）2D网格。基于点的X、Y坐标，相对于LiDAR传感器原点的预定范围内，每个点被量化为2D网格的一个单元。量化后，Apollo计算网格内每个单元格中点的8个统计测量，这将是下一步中传递给CNN的输入通道特征。计算的8个统计测量：
+
+1. 单元格中点的最大高度--max_height_data
+2. 单元格中最高点的强度--top_intensity_data
+3. 单元格中点的平均高度--mean_height_data
+4. 单元格中点的平均强度--mean_intensity_data
+5. 单元格中的点数--count_data
+6. 单元格中心相对于原点的角度--direction_data
+7. 单元格中心与原点之间的距离--distance_data
+8. 二进制值标示单元格是空还是被占用--nonempty_data
+
+```c++
+/// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
+void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
+  /// call hdmap to get ROI
+  ...
+  /// call roi_filter
+  ...
+  /// call segmentor
+  std::vector<ObjectPtr> objects;
+  if (segmentor_ != nullptr) {
+    SegmentationOptions segmentation_options;
+    segmentation_options.origin_cloud = point_cloud;
+    PointIndices non_ground_indices;
+    non_ground_indices.indices.resize(roi_cloud->points.size());
+    std::iota(non_ground_indices.indices.begin(), non_ground_indices.indices.end(), 0);
+    if (!segmentor_->Segment(roi_cloud, non_ground_indices, segmentation_options, &objects)) {
+      ...
+    }
+  }
+}
+
+/// file in apollo/master/modules/perception/obstacle/lidar/segmentation/cnnseg/cnn_segmentation.cc
+bool CNNSegmentation::Segment(const pcl_util::PointCloudPtr& pc_ptr,
+                              const pcl_util::PointIndices& valid_indices,
+                              const SegmentationOptions& options,
+                              vector<ObjectPtr>* objects) {
+  // generate raw features
+  if (use_full_cloud_) {
+    feature_generator_->Generate(options.origin_cloud);
+  } else {
+    feature_generator_->Generate(pc_ptr);
+  }
+  ...
+}
+```
+
+从上面代码可以看出，与高精地图ROI过滤器一样，所有的分割操作都在CNNSegmentation这个类里面完成。接下来我们从代码入手，看看怎么样从一个点云的集合{(x,y,z,i)}得到上述8类数据，最终由cloud_local映射过后的点云集合会生成一个[1,8,w,h]的矩阵作为CNN的输入，其中w和h在外部文件中定义，都为512。这里的use_full_cloud_标志其实是处理原始点云or处理roi点云(去掉背景)，默认使用原始点云use_full_cloud_=true。
+
+**这里有一个注意点，原始点云的x和y都有他的范围，即激光雷达的感知范围。有这么一个前提：其实事实上激光雷达检测到360度范围内的点云，如果点云离激光雷达lidar太远，那么这些点其实没必要去处理，处理车辆附近的点云(E.g. 60米范围内)，即可以节省计算资源，降又能低复杂度。而这个筛选的范围由参数point_cloud_range参数控制，默认60米**
+
+(1) 将点云实际的xy坐标映射到输入矩阵HxW平面坐标，并且筛选点云高度
+
+从上面得知，分割阶段处理的点云实际上是激光雷达物理距离x:[-60,60], y:[-60,60]区间内的点云，但是CNN接受的输入大小NCHW是1x8xHxW。所以需要将这个范围内的点云坐标重新映射到HxW这个大小的平面。那么转换其实很简单：
+
+E.g. 1. 如果点X轴坐标px从范围[a,b]，拉伸/压缩映射到范围[c,d]，则映射过后的新坐标px2= c + (d-c)/(b-a) \* (px-a)
+
+E.g. 2. 如果点X轴坐标px从范围[-a,a]，拉伸/压缩映射到范围[0,c]，则映射过后的新坐标px2 = c/2a \* (px-(-a))
+
+接着回到代码，我们看看映射的过程：
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/cnn_segmentation.cc
+void FeatureGenerator<Dtype>::Generate(const apollo::perception::pcl_util::PointCloudConstPtr& pc_ptr) {
+  const auto& points = pc_ptr->points;
+
+  map_idx_.resize(points.size());
+  float inv_res_x = 0.5 * static_cast<float>(width_) / static_cast<float>(range_);   // E.g.2 inv_res_x == c/2a(a=range_, c=widht_)
+  float inv_res_y = 0.5 * static_cast<float>(height_) / static_cast<float>(range_);  // E.g.2 inv_res_x == c/2a(a=range_, c=widht_)
+
+  for (size_t i = 0; i < points.size(); ++i) {
+  	// 1. remove the cloud points which height is out of the interval [-5.0,5.0]
+    if (points[i].z <= min_height_ || points[i].z >= max_height_) {          
+      map_idx_[i] = -1;
+      continue;
+    }
+    // * the coordinates of x and y are exchanged here
+    int pos_x = F2I(points[i].y, range_, inv_res_x);  // compute mapping coordinate: col
+    int pos_y = F2I(points[i].x, range_, inv_res_y);  // compute mapping coordinate: row
+    // 2. remove the cloud points which out of the interval x:[-60,60], y:[-60,60]
+    if (pos_x >= width_ || pos_x < 0 || pos_y >= height_ || pos_y < 0) {
+      map_idx_[i] = -1;
+      continue;
+    }
+    map_idx_[i] = pos_y * width_ + pos_x;
+}
+
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/util.h
+inline int F2I(float val, float ori, float scale) {        // compute mapping coordinate in E.g.2, (px-(-a)) * c/2a
+  return static_cast<int>(std::floor((ori - val) * scale));
+}
+```
+
+从上面代码很容易的看到这个映射过程，以及两个筛选流程：
+
+- 去除高度在5米以上或者-5米以下的点云。信号灯高度差不多在5米以下，因此5米以上可能是建筑物之类的无效点云，可以出去
+- 去除xy在60米以外的点云。范围过大，离车过远的点云，即使包含物体，也没必要检测。
+
+(2) 计算单元格中的8类数据
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/cnn_segmentation.cc
+bool FeatureGenerator<Dtype>::Init(const FeatureParam& feature_param, caffe::Blob<Dtype>* out_blob) {
+  for (int row = 0; row < height_; ++row) {
+    for (int col = 0; col < width_; ++col) {
+      int idx = row * width_ + col;
+      // * row <-> x, column <-> y
+      float center_x = Pixel2Pc(row, height_, range_);     // compute mapping coordinate: center_x
+      float center_y = Pixel2Pc(col, width_, range_);      // compute mapping coordinate: center_y
+      constexpr double K_CV_PI = 3.1415926535897932384626433832795;
+      direction_data[idx] = static_cast<Dtype>(std::atan2(center_y, center_x) / (2.0 * K_CV_PI)); // compute direction_data(channel 6)
+      distance_data[idx] = static_cast<Dtype>(std::hypot(center_x, center_y) / 60.0 - 0.5);       // compute distance_data(channel 7)
+    }
+  }
+  return true;
+}
+
+void FeatureGenerator<Dtype>::Generate(const apollo::perception::pcl_util::PointCloudConstPtr& pc_ptr) {
+  for (size_t i = 0; i < points.size(); ++i) {
+    // 1. remove the cloud points which height is out of the interval [-5.0,5.0]
+    ...
+    // 2. remove the cloud points which out of the interval x:[-60,60], y:[-60,60]
+    ...
+    float pz = points[i].z;    
+    float pi = points[i].intensity / 255.0;
+    if (max_height_data_[idx] < pz) {        // update max_height_data(channel 1)
+      max_height_data_[idx] = pz;
+      top_intensity_data_[idx] = pi;		 // update top_intensity_data(channel 2)
+    }
+    mean_height_data_[idx] += static_cast<Dtype>(pz);    // accumulated  mean_height_data
+    mean_intensity_data_[idx] += static_cast<Dtype>(pi); // accumulated mean_intensity_data
+    count_data_[idx] += Dtype(1);					// compute count_data(channel 5)
+  }
+
+  for (int i = 0; i < siz; ++i) {
+    constexpr double EPS = 1e-6;
+    if (count_data_[i] < EPS) {
+      max_height_data_[i] = Dtype(0);
+    } else {
+      mean_height_data_[i] /= count_data_[i];       // compute  mean_height_data(channel 3)
+      mean_intensity_data_[i] /= count_data_[i];    // compute  mean_intensity_data(channel 5)
+      nonempty_data_[i] = Dtype(1);                 // compute nonempty_data(channel 8)
+    }
+  }
+}
+
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/util.h
+inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
+  float res = 2.0 * out_range / in_size;
+  return out_range - (static_cast<float>(in_pixel) + 0.5f) * res;
+}
+```
+
+上面的代码经过标记可以很清晰的明白数据的生成过程，其中网格中的点到原点的距离和方向跟实际数据无关，所以在Init函数中早早计算完成了；而其他六类数据需要根据输入计算，因此在Generate函数中计算。其中Pixel2Pc函数其实就是上面坐标映射，换汤不换药，但是有一个问题需要注意，这里额外加上了一个0.5f，这个作用其实就是计算网格的中心点坐标装换。比如第一个网格x坐标是0，那么网格中心点就是0.5(0-1中心)，这里稍微注意下就行，其他一样。
+
+#### 2.2.2 基于卷积神经网络的障碍物预测
 
