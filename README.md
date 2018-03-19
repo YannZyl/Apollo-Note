@@ -39,8 +39,9 @@ Links:
 
 References：
 
-- 相机标定 Camera Calibration(待完善)
-- [ROS tf坐标系介绍](http://wiki.ros.org/tf/Tutorials#Learning_tf)
-- [ROS tf坐标系转换Example](http://wiki.ros.org/navigation/Tutorials/RobotSetup/TF)
-- [ROS && PCL PointCloud点云介绍](http://wiki.ros.org/pcl/Overview)
-- [扫描线算法](https://www.jianshu.com/p/d9be99077c2b)
+- 感知模块：相机标定 Camera Calibration(待完善)
+- [感知模块：ROS tf坐标系介绍](http://wiki.ros.org/tf/Tutorials#Learning_tf)
+- [感知模块：ROS tf坐标系转换Example](http://wiki.ros.org/navigation/Tutorials/RobotSetup/TF)
+- [感知模块：ROS&&PCL PointCloud点云介绍](http://wiki.ros.org/pcl/Overview)
+- [感知模块：扫描线算法](https://www.jianshu.com/p/d9be99077c2b)
+- [感知模块：并查集算法](https://www.cnblogs.com/shadowwalker9/p/5999029.html)

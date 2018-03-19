@@ -6,7 +6,7 @@
 
 ## 1. 障碍物感知: 3D Obstacles Perception
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_framework.png)
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/perception_obstacles_framework.png)
 
 上图为子节点之间的关系与数据流动，障碍物感知共存在三个子节点(线程)，分别为：
 
@@ -67,7 +67,7 @@ SensorObject继承了Object类，主要数据结构如下：
 
 从上面两张表格基本可以看出激光雷达模块需要做的工作，Object类很完善地存储了单个物体的一些静态与动态信息，静态信息包括物体点云数据，凸包及标定框信息，坐标系坐标/偏向/尺寸信息，物体的类别信息等；动态信息主要是在跟踪过程中物体速度，中心变化等信息。而在一次激光雷达扫描过程中，得到的信息中包含了多类物体，因此SensorObject类中存储了Object的一个向量，刻画了本次扫描分离的物体集合，同时包含了一些标记信息如感知来源、设备id、时间戳、序列等，最后还包含了本次激光雷达扫描到的车道线信息。SensorObject类包含了每次激光雷达扫描得到的所有信息。
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_lidar.png)
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/perception_obstacles_lidar.png)
 
 上图展示了激光雷达处理的4个模块，分别为高精地图ROI过滤器、基于卷积神经网络的障碍物分割、MinBox 障碍物边框构建与HM对象跟踪。接下去将一层层解剖代码，分析各个模块的流程的方法。
 
@@ -324,7 +324,7 @@ bool HDMapInput::GetSignals(const Eigen::Matrix4d &pointd, std::vector<apollo::h
 
 最后有个问题，转换到局部ENU坐标系有什么作用，以及效果。简单地说一下ENU坐标系是带有方向性的，所以转换到该坐标系下的polygeons_world和cloud_local其实是有东南西北的意思，从Apollo官方文档可以看到效果如下，得到当前位置下ROI区域内外的一个矩形框，这时候路面和路口就有东西南北走向的意义。
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/roi_lookup_table.png)
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/roi_lookup_table.png)
 
 **思考：为什么不在车辆坐标系(IMU坐标系)或者lidar坐标系下面进行接下去的分割操作？(这两个坐标系的方向都参考车头的方向，是没有东南西北这些地理位置信息的)。**
 
@@ -454,7 +454,7 @@ void PolygonScanConverter::ConvertScans( std::vector<std::vector<Interval>> *sca
 
 从上面段代码我们来分析一下DrawPolygonInBitmap的流程，首先GetValidXRange函数其实是获取主方向上，最大值和最小值，跟MajorDirection几乎无差异，这里不在分析。有基础的应该容易看懂。接着第二部分是将路面与边界线的多边形有序集合转换成Edge信息，如何转换？
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_roi_lut.png)
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/perception_obstacles_roi_lut.png)
 
 需要了解一个前提，polygons_local里面存储了路面和路口的多边形信息，对于每个多边形polygon，它里面存储了N个点云(主要使用其xy坐标)，物体的轮廓点是有序的排列的，所以每两个相邻的点可以构建一条边，最后得到一个封闭的轮廓(如上图A所示)。所以每个polygon里面存的形式为：
 
@@ -551,7 +551,7 @@ bool PolygonScanConverter::ConvertSegmentToEdge(const size_t seg_id, std::pair<i
 
 另外返回false的条件是什么意思，"k有限大并且边与x_id号网络线交点超过了边的最大坐标(在边的延长线上，边外)"，这说明，这条边与x_id号网格线没有交点，也不是垂直边，无效边！
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_roi_lut2.png)
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/perception_obstacles_roi_lut2.png)
 
 4. 如上图E，第一个问题"计算E有什么用?" 首先我们要知道一个问题：如果多边形只包含凸或者凹，那么网格线穿过多边形，如何计算落在多边形ROI里面的区间？只要计算多边形和该网格线的交点，然后按照y的大小从小到大排列，必定是2n的交点{P1,P2,P3,...,P2n}，那么落入多边形的区间肯定是[P1.y,P2.y] [P3.y, P4.y], .. , [P2n-1.y, P2n.y]。这个可以从上图证实。那么对于3中的交点E可以排序，两两组合最终得到路面与路口区域落在该网格线上的区间。这部分代码有点难，可以慢慢体会：
 
@@ -868,9 +868,43 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 
 #### 2.2.2 基于卷积神经网络的障碍物预测
 
-基于卷积神经网络的障碍物分割采用的是UNet CNN。具体结构如下：
+基于上述通道特征，Apollo使用深度完全卷积神经网络（FCNN）来预测单元格障碍物属性，包括潜在物体中心的偏移位移（称为中心偏移）、对象性、积极性和物体高度。如图2所示，网络的输入为 W x H x C 通道图像，其中：
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_segment_unet.png)
+- W 代表网格中的列数
+- H 代表网格中的行数
+- C 代表通道特征数
+
+完全卷积神经网络由三层构成：
+
+- 下游编码层（特征编码器）
+- 上游解码层（特征解码器）
+- 障碍物属性预测层（预测器）
+
+特征编码器将通道特征图像作为输入，并且随着特征抽取的增加而连续下采样其空间分辨率。 然后特征解码器逐渐对特征图像。上采样到输入2D网格的空间分辨率，可以恢复特征图像的空间细节，以促进单元格方向的障碍物位置、速度属性预测。根据具有非线性激活（即ReLu）层的堆叠卷积/分散层来实现 下采样和 上采样操作。
+
+代码中的执行分割入口函数如下所示，由caffe的Forword函数前向计算得到：
+
+```c++
+/// file in apollo/master/modules/perception/obstacle/lidar/segmentation/cnnseg/cnn_segmentation.cc
+bool CNNSegmentation::Segment(const pcl_util::PointCloudPtr& pc_ptr,
+                              const pcl_util::PointIndices& valid_indices,
+                              const SegmentationOptions& options,
+                              vector<ObjectPtr>* objects) {
+  // generate raw features
+  ...
+
+  // network forward process
+#ifdef USE_CAFFE_GPU
+  caffe::Caffe::set_mode(caffe::Caffe::GPU);
+#endif
+  caffe_net_->Forward();
+  PERF_BLOCK_END("[CNNSeg] CNN forward");
+}
+```
+
+基于卷积神经网络的障碍物分割采用的是UNet的FCNN。具体结构如下：
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/perception_obstacles_segment_unet.png)
 
 接下去我们对整个网络的输入与输出做一个表格的总结：
 
@@ -939,3 +973,204 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 	<td>高度预测。</td>
 </tr>
 </table>
+
+以上神经网络的输出被分为6部分，各部分作用如上表所示，该过程就是传统的CNN分割。
+
+#### 2.2.3 障碍物聚类
+
+>在基于CNN的预测之后，Apollo获取单个单元格的预测信息。利用四个单元对象属性图像，其中包含：
+>
+>- 中心偏移/instance_pt
+>- 对象性/category_pt
+>- 积极性/configdence_pt
+>- 对象高度/height_pt
+>
+>为生成障碍物，Apollo基于单元格中心偏移，预测构建有向图，并搜索连接的组件作为候选对象集群。
+>
+>如下图所示，每个单元格是图的一个节点，并且基于单元格的中心偏移预测构建有向边，其指向对应于另一单元的父节点。
+>
+>如下图，Apollo采用压缩的联合查找算法（Union Find algorithm ）有效查找连接组件，每个组件都是候选障碍物对象集群。对象是单个单元格成为有效对>象的概率。因此，Apollo将非对象单元定义为目标小于0.5的单元格。因此，Apollo过滤出每个候选对象集群的空单元格和非对象集。
+>
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/obstacle_clustering.png)
+>
+>(a) 红色箭头表示每个单元格对象中心偏移预测；蓝色填充对应于物体概率不小于0.5的对象单元。
+>
+>(b) 固体红色多边形内的单元格组成候选对象集群。
+>
+>由五角星填充的红色范围表示对应于连接组件子图的根节点（单元格）。
+>
+>一个候选对象集群可以由其根节点彼此相邻的多个相邻连接组件组成。
+
+上述是Apollo 2.0官方文档的描述，听起来还是懵懵懂懂，那么在这章节我们依旧用来代码来解释如何利用CNN分割结果进行障碍物聚类。本小节使用了一个比较简单的数据结构来处理不相交集合的合并问题--并查集(或者联合查找算法, Union Find Sets)，如果你对并查集不了解，可以通过此链接进行初步了解[并查集算法](https://www.cnblogs.com/shadowwalker9/p/5999029.html)
+
+障碍物预测并查集算法由Cluster函数触发：
+
+```c++
+/// file in apollo/master/modules/perception/obstacle/lidar/segmentation/cnnseg/cnn_segmentation.cc
+bool CNNSegmentation::Segment(const pcl_util::PointCloudPtr& pc_ptr,
+                              const pcl_util::PointIndices& valid_indices,
+                              const SegmentationOptions& options,
+                              vector<ObjectPtr>* objects) {
+  // generate raw features
+  ...
+  // network forward process
+  ...
+  // clutser points and construct segments/objects
+  cluster2d_->Cluster(*category_pt_blob_, *instance_pt_blob_, pc_ptr,
+                      valid_indices, objectness_thresh,
+                      use_all_grids_for_clustering);
+}
+```
+
+下面我们将从代码逐步了解：
+
+1. 并查集建立步骤1: 建立新的并查集--DisjointSetMakeSet
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/cluster2d.h
+class Cluster2D {
+public:
+  void Cluster(const caffe::Blob<float>& category_pt_blob,
+               const caffe::Blob<float>& instance_pt_blob,
+               const apollo::perception::pcl_util::PointCloudPtr& pc_ptr,
+               const apollo::perception::pcl_util::PointIndices& valid_indices,
+               float objectness_thresh, bool use_all_grids_for_clustering) {
+
+    std::vector<std::vector<Node>> nodes(rows_,std::vector<Node>(cols_, Node()));
+    // map points into grids
+    ...
+
+    // construct graph with center offset prediction and objectness
+    for (int row = 0; row < rows_; ++row) {
+      for (int col = 0; col < cols_; ++col) {
+        int grid = RowCol2Grid(row, col);
+        Node* node = &nodes[row][col];
+        DisjointSetMakeSet(node);
+        node->is_object = (use_all_grids_for_clustering || nodes[row][col].point_num > 0) &&
+            (*(category_pt_data + grid) >= objectness_thresh);
+        int center_row = std::round(row + instance_pt_x_data[grid] * scale_);
+        int center_col = std::round(col + instance_pt_y_data[grid] * scale_);
+        center_row = std::min(std::max(center_row, 0), rows_ - 1);
+        center_col = std::min(std::max(center_col, 0), cols_ - 1);
+        node->center_node = &nodes[center_row][center_col];
+      }
+    }
+  }
+}
+
+/// file in apollo/modules/common/util/disjoint_set.h
+template <class T>
+void DisjointSetMakeSet(T *x) {
+  x->parent = x;
+  x->node_rank = 0;
+}
+```
+
+先从代码流程上看，上述是Cluster函数的第二个阶段，构建新的并查集(第一阶段是上面的"map points into grids"仅仅是数据的一个复制过程，比较简单)。这个阶段主要的函数是DisjointSetMakeSet，该函数下面的一些操作还包括判断该节点是否是物体的一个部分(is_object)，需要is_object大于一个阈值(外部文件定义objectness_thresh，默认0.5)；判断节点指向的中心节点center_node坐标。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/uset_0.png)
+
+回到代码，建立并查集第一步，建立一个新的并查集，其中包含s个单元素集合(对应grid_=512x512个Node)。每个节点的父指针指向自己(如上图)。代码中node_rank其实是用于集合合并，代码采用了按秩合并策略，node_rank代表树的高度上界。
+
+2. 并查集建立步骤2: 集合(树)合并--Traverse && DisjointSetUnion
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/cluster2d.h
+class Cluster2D {
+public:
+  void Cluster(const caffe::Blob<float>& category_pt_blob,
+               const caffe::Blob<float>& instance_pt_blob,
+               const apollo::perception::pcl_util::PointCloudPtr& pc_ptr,
+               const apollo::perception::pcl_util::PointIndices& valid_indices,
+               float objectness_thresh, bool use_all_grids_for_clustering) {
+
+    std::vector<std::vector<Node>> nodes(rows_,std::vector<Node>(cols_, Node()));
+    // map points into grids
+    ...
+    // construct graph with center offset prediction and objectness
+    ...
+    // traverse nodes
+    for (int row = 0; row < rows_; ++row) {
+      for (int col = 0; col < cols_; ++col) {
+        Node* node = &nodes[row][col];
+        if (node->is_object && node->traversed == 0) {
+          Traverse(node);
+        }
+      }
+    }
+    for (int row = 0; row < rows_; ++row) {
+      for (int col = 0; col < cols_; ++col) {
+        Node* node = &nodes[row][col];
+        if (!node->is_center) {
+          continue;
+        }
+        for (int row2 = row - 1; row2 <= row + 1; ++row2) {
+          for (int col2 = col - 1; col2 <= col + 1; ++col2) {
+            if ((row2 == row || col2 == col) && IsValidRowCol(row2, col2)) {
+              Node* node2 = &nodes[row2][col2];
+              if (node2->is_center) {
+                DisjointSetUnion(node, node2);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+这个阶段主要做的工作包括两部分：
+
+- 不相交集合的建立--Traverse
+
+通过每个节点的center_node(由CNN分割输出得到)，可以建立一条从属管理的链，如下图。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/uset_1.png)
+
+图中4个节点的关系，d的中心是c节点，c的中心是b节点，b的中心是a节点，a的中心是自己。那么我们可以根据这个center_node的指针建立一条链表。通过这个center_node我们可以确定每个节点的父节点，也就是如上图左箭头所示。
+
+**这种表示方法有一个问题：当需要查询某个节点的最顶层父节点a，所需要的时间复杂度是树的高度，无法保证在常数时间内完成，所以代码中采用了压缩路径的并查集算法**
+
+如何压缩路径？这里采用子节点直接指向顶层父节点的方法，经过处理也就是上图右边的结果，dcba四个节点都指向顶层父节点--a节点。
+
+下面我们分析Traverse函数，初次这个函数有点让人费解，可以看一下：
+
+```c++
+class Cluster2D {
+  void Traverse(Node* x) {
+    std::vector<Node*> p;
+    p.clear();
+    while (x->traversed == 0) {
+      p.push_back(x);
+      x->traversed = 2;
+      x = x->center_node;
+    }
+    if (x->traversed == 2) {
+      for (int i = static_cast<int>(p.size()) - 1; i >= 0 && p[i] != x; i--) {
+        p[i]->is_center = true;
+      }
+      x->is_center = true;
+    }
+    for (size_t i = 0; i < p.size(); i++) {
+      Node* y = p[i];
+      y->traversed = 1;
+      y->parent = x->parent;
+    }
+  }
+};
+```
+
+代码中第一个while是从当前节点x向上路由到最顶层父节点(**注意这里的最顶层父节点并不是整整意义上的最顶层，而是最上面的没有遍历过得tranersed=0，因为便利过得父节点其parent指针已经指向最顶层节点了**)，得到的路径放入path。for循环就是修改节点的父节点指针，都指向最顶层达到图右边的效果。
+
+**这里一个比较难理解的环节就是travered标志位，这个标志位乍一看其实看不出什么作用，他的作用就是区别不同的集合(树)。举个例子:**
+
+输入a节点，如果有链1：a--b--c--d--e。经过Traverse处理，abcde节点父指针指向e，is_traversed=1，并且is_center=true
+
+输入f节点，如果有链2：f--g--c--d--e. 经过Traverse处理，fgcde节点父指针指向e，is_traversed=1，但是fg的is_center=false(没有执行中间的if)，这是因为fg和cde在一颗树上，并不需要树的合并。
+
+输入h节点，如果有链3：h--i--j--k，经过Traverse处理，hijk节点父指针指向k，is_traversed=1，并且is_center=true
+
+其实观察可以发现，每棵树只有一条path的is_center=true，其他支路都是false，所以作用一棵树只与另一颗树的指定支路上合并。传统的并查集仅仅是树的根之间合并，这里增加了根与部分支点间合并，效果很好。
+
+- 不相交集合的合并--DisjointSetUnion
