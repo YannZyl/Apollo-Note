@@ -874,7 +874,7 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 
 接下去我们对整个网络的输入与输出做一个表格的总结：
 
-<table border="5">
+<table border="1">
 <tr>
 	<th>类型</th>
 	<th>内容</th>
@@ -915,20 +915,20 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 </tr>
 <tr>
 	<th rowspan="6">输出 [1,12,512,512]</th>
-	<td>channel 0: category_pt,是否是物体</td>
-	<td> Sigmoid激活，并与输入channel 7掩码mask相乘</td>
+	<td>channel 0: category_pt</td>
+	<td>是否是物体预测。Sigmoid激活，并与输入channel 7掩码mask相乘</td>
 </tr>
 <tr>
 	<td>channel 1-2: instance_pt</td>
-	<td>-</td>
+	<td>中心偏移预测</td>
 </tr>
 <tr>
 	<td>channel 3: confidence_pt</td>
-	<td>Sigmoid激活</td>
+	<td>前景物体概率预测。Sigmoid激活</td>
 </tr>
 <tr>
 	<td>channel 4-8: classify_pt</td>
-	<td>Sigmoid激活</td>
+	<td>物体类别预测。Sigmoid激活</td>
 </tr>
 <tr>
 	<td>channel 9-10: heading_pt</td>
@@ -936,6 +936,6 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 </tr>
 <tr>
 	<td>channel 11: height_pt</td>
-	<td>-</td>
+	<td>高度预测。</td>
 </tr>
 </table>
