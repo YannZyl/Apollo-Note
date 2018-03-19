@@ -868,3 +868,50 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 
 #### 2.2.2 基于卷积神经网络的障碍物预测
 
+基于卷积神经网络的障碍物分割采用的是UNet CNN。具体结构如下：
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles_segment_unet.png)
+
+接下去我们对整个网络的输入与输出做一个表格的总结：
+
+<table border="1">
+<tr>
+	<th>类型</th>
+	<th>内容</th>
+	<th>备注</th>
+</tr>
+<tr>
+	<th rowspan="8">输入</th>
+	<td>channel 0: 单元格中点的最大高度</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 1: 单元格中最高点的强度</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 2: 单元格中点的平均高度</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 3: 单元格中点的平均强度</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 4: 单元格中的点数</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 5: 单元格中心相对于原点的角度</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 6: 单元格中心与原点之间的距离</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 7/mask: 进制值标示单元格是空还是被占用</td>
+	<td>掩码mask</td>
+</tr>
+
+</table>
