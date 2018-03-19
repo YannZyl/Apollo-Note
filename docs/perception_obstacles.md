@@ -1072,7 +1072,7 @@ void DisjointSetMakeSet(T *x) {
 
 回到代码，建立并查集第一步，建立一个新的并查集，其中包含s个单元素集合(对应grid_=512x512个Node)。每个节点的父指针指向自己(如上图)。代码中node_rank其实是用于集合合并，代码采用了按秩合并策略，node_rank代表树的高度上界。
 
-2. 并查集建立步骤2: 集合(树)合并--Traverse && DisjointSetUnion
+2. 并查集建立步骤2: 产生不相交集合(树)--Traverse
 
 ```c++
 /// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/cluster2d.h
@@ -1098,31 +1098,11 @@ public:
         }
       }
     }
-    for (int row = 0; row < rows_; ++row) {
-      for (int col = 0; col < cols_; ++col) {
-        Node* node = &nodes[row][col];
-        if (!node->is_center) {
-          continue;
-        }
-        for (int row2 = row - 1; row2 <= row + 1; ++row2) {
-          for (int col2 = col - 1; col2 <= col + 1; ++col2) {
-            if ((row2 == row || col2 == col) && IsValidRowCol(row2, col2)) {
-              Node* node2 = &nodes[row2][col2];
-              if (node2->is_center) {
-                DisjointSetUnion(node, node2);
-              }
-            }
-          }
-        }
-      }
-    }
   }
 }
 ```
 
-这个阶段主要做的工作包括两部分：
-
-- 不相交集合的建立--Traverse
+这个阶段是根据CNN的分割结果，产生若干个不相交的集合(N棵树)
 
 通过每个节点的center_node(由CNN分割输出得到)，可以建立一条从属管理的链，如下图。
 
@@ -1163,14 +1143,229 @@ class Cluster2D {
 
 代码中第一个while是从当前节点x向上路由到最顶层父节点(**注意这里的最顶层父节点并不是整整意义上的最顶层，而是最上面的没有遍历过得tranersed=0，因为便利过得父节点其parent指针已经指向最顶层节点了**)，得到的路径放入path。for循环就是修改节点的父节点指针，都指向最顶层达到图右边的效果。
 
-**这里一个比较难理解的环节就是travered标志位，这个标志位乍一看其实看不出什么作用，他的作用就是区别不同的集合(树)。举个例子:**
+**这里一个比较难理解的环节就是travered标志位，这个标志位乍一看其实看不出什么作用，他的作用其实是标记每棵树的一条支路，后续的合并在这条支路上进行。举个例子:**
 
 输入a节点，如果有链1：a--b--c--d--e。经过Traverse处理，abcde节点父指针指向e，is_traversed=1，并且is_center=true
 
-输入f节点，如果有链2：f--g--c--d--e. 经过Traverse处理，fgcde节点父指针指向e，is_traversed=1，但是fg的is_center=false(没有执行中间的if)，这是因为fg和cde在一颗树上，并不需要树的合并。
+输入f节点，如果有链2：f--g--c--d--e. 经过Traverse处理，fgcde节点父指针指向e，is_traversed=1，但是fg的is_center=false(没有执行中间的if)，这是因为这棵树上已经存在一条支路abcde用来后续的合并，所以fgcde这条支路就不需要了。
 
-输入h节点，如果有链3：h--i--j--k，经过Traverse处理，hijk节点父指针指向k，is_traversed=1，并且is_center=true
+输入h节点，如果有链3：h--i--j--k，经过Traverse处理，hijk节点父指针指向k，is_traversed=1，并且is_center=true，这是第二棵树
 
-其实观察可以发现，每棵树只有一条path的is_center=true，其他支路都是false，所以作用一棵树只与另一颗树的指定支路上合并。传统的并查集仅仅是树的根之间合并，这里增加了根与部分支点间合并，效果很好。
+其实观察可以发现，每棵树只有一条path的is_center=true，其他支路都是false，所以作用一棵树只与另一颗树的指定支路上合并。传统的并查集仅仅是树的根之间合并，这里增加了根与部分支点间合并，效果更好好。
 
-- 不相交集合的合并--DisjointSetUnion
+3. 并查集建立步骤3: 不相交集合(树)合并--DisjointSetUnion
+
+当给定两个节点x，y时，就需要查找，这两个节点的顶层父节点是否一致。如果不一致就需要进行一个集合(树)合并。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/uset_2.png)
+
+上图如果给出两个节点d和g(DisjointSetUnion函数的两个输入)，我们就需要去查询d和g节点的最顶层父节点，这里可以从上一步骤中查询结果，最终发现顶层节点不一致，所以就需要进行一个合并，最终经过合并的结果如图右。
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/cluster2d.h
+class Cluster2D {
+public:
+  void Cluster(const caffe::Blob<float>& category_pt_blob,
+               const caffe::Blob<float>& instance_pt_blob,
+               const apollo::perception::pcl_util::PointCloudPtr& pc_ptr,
+               const apollo::perception::pcl_util::PointIndices& valid_indices,
+               float objectness_thresh, bool use_all_grids_for_clustering) {
+
+    std::vector<std::vector<Node>> nodes(rows_,std::vector<Node>(cols_, Node()));
+    // map points into grids
+    ...
+    // construct graph with center offset prediction and objectness
+    ...
+    // traverse nodes, generate collections
+    ...
+    // merge collection
+    for (int row = 0; row < rows_; ++row) {
+      for (int col = 0; col < cols_; ++col) {
+        Node* node = &nodes[row][col];
+        if (!node->is_center) {
+          continue;
+        }
+        for (int row2 = row - 1; row2 <= row + 1; ++row2) {
+          for (int col2 = col - 1; col2 <= col + 1; ++col2) {
+            if ((row2 == row || col2 == col) && IsValidRowCol(row2, col2)) {
+              Node* node2 = &nodes[row2][col2];
+              if (node2->is_center) {
+                DisjointSetUnion(node, node2);
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+```
+
+**一个注意点，两个节点的最顶层父节点不一致，说明他们不属于同一类，既然不属于一类，那为什么要合并呢？原因很简单，在局部区域内(注意一定是局部区域内)，两棵树虽然最顶层不一致，但可能是CNN的误差造成这一结果，事实上这两个区域内很可能是同一种物体，所以这里对临近区域进行合并**
+
+**局部区域这个概念在代码中的直观反应是合并只在当前节点的3x3网格中进行(row2&&col2
+参数，相距太远必然不属于同种物体，根本不需要去合并，因为一棵树上的节点都是属于同一物体的组件) ！！！**
+
+```c++
+/// file in apollo/modules/common/util/disjoint_set.h
+template <class T>
+void DisjointSetMerge(T *x, const T *y) {}
+
+template <class T>
+void DisjointSetUnion(T *x, T *y) {
+  x = DisjointSetFind(x);
+  y = DisjointSetFind(y);
+  if (x == y) {
+    return;
+  }
+  if (x->node_rank < y->node_rank) {
+    x->parent = y;
+    DisjointSetMerge(y, x);
+  } else if (y->node_rank < x->node_rank) {
+    y->parent = x;
+    DisjointSetMerge(x, y);
+  } else {
+    y->parent = x;
+    x->node_rank++;
+    DisjointSetMerge(x, y);
+  }
+}
+```
+
+上述代码比较简单，DisjointSetFind(x)是找到x的顶层父节点，然后后续步骤就是顶层父节点的融合。相对比较简单。注意这里的DisjointSetMerge函数是被合并那棵树上子节点的parent修正，因为被合并了，所以这棵树上的子节点的最顶层父节点都要修改，当然可以维护，但是成本比较大(可以参考quick_union算法)，这里不去做修正也没事，无非是增加了一些开销。
+
+4. 合并完以后，每棵树就代表一类物体，做记录
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/cluster2d.h
+class Cluster2D {
+public:
+  void Cluster(const caffe::Blob<float>& category_pt_blob,
+               const caffe::Blob<float>& instance_pt_blob,
+               const apollo::perception::pcl_util::PointCloudPtr& pc_ptr,
+               const apollo::perception::pcl_util::PointIndices& valid_indices,
+               float objectness_thresh, bool use_all_grids_for_clustering) {
+
+    std::vector<std::vector<Node>> nodes(rows_,std::vector<Node>(cols_, Node()));
+    // map points into grids
+    ...
+    // construct graph with center offset prediction and objectness
+    ...
+    // traverse nodes, generate collections
+    ...
+    // merge collection
+    ...
+    // generate object id
+    for (int row = 0; row < rows_; ++row) {
+      for (int col = 0; col < cols_; ++col) {
+        Node* node = &nodes[row][col];
+        if (!node->is_object) {
+          continue;
+        }
+        Node* root = DisjointSetFind(node);
+        if (root->obstacle_id < 0) {
+          root->obstacle_id = count_obstacles++;
+          obstacles_.push_back(Obstacle());
+        }
+        int grid = RowCol2Grid(row, col);
+        id_img_[grid] = root->obstacle_id;
+        obstacles_[root->obstacle_id].grids.push_back(grid);
+      }
+    }
+  }
+}
+```
+
+代码中`root->obstacle_id=count_obstacles++;`这句话就已经很明白的支出，每棵树的root节点就代表一个候选物体对象，整棵树上所有的节点就组成了一个候选对象集群。对象存放在`obstacles_`这个vector<Obstacle>中，该对象包含的候选对象集群(所属网格点)保存在这个`Obstacle.grids`的vector中。
+
+经过这一步处理完，就知道网格是否有物体，如果是物体对象，那么包含那些网格。但是不知道这是什么物体。
+
+#### 2.2.4 后期处理
+
+聚类后，Apollo获得一组候选对象集，每个候选对象集包括若干单元格。 
+
+在后期处理中，Apollo首先对所涉及的单元格的积极性和物体高度值，平均计算每个候选群体的检测置信度分数和物体高度。 然后，Apollo去除相对于预测物体高度太高的点，并收集每个候选集中的有效单元格的点。 最后，Apollo删除具有非常低的可信度分数或小点数的候选聚类，以输出最终的障碍物集/分段。
+
+用户定义的参数可以在`modules/perception/model/cnn_segmentation/cnnseg.conf`的配置文件中设置。 下表说明了CNN细分的参数用法和默认值：
+
+
+ |参数名称             |使用说明                                           |默认值    |
+ |-----------------------------------|--------------------------------------------------------------------------------------------|-----------|
+ |objectness_thresh                  |用于在障碍物聚类步骤中过滤掉非对象单元的对象的阈值。 |0.5        |
+ |use_all_grids_for_clustering       |指定是否使用所有单元格在障碍物聚类步骤中构建图形的选项。如果不是，则仅考虑占用的单元格。   |true   |
+ |confidence_thresh                  |用于在后期处理过程中滤出候选聚类的检测置信度得分阈值。    |0.1    |
+ |height_thresh                      |如果是非负数，则在后处理步骤中将过滤掉高于预测物体高度的点。 |0.5 meters |
+ |min_pts_num                        |在后期处理中，删除具有小于min_pts_num点的候选集群。 |3   |
+ |use_full_cloud                     |如果设置为true，则原始点云的所有点将用于提取通道特征。 否则仅使用输入点云的点（即，HDMap ROI过滤器之后的点）。  |true |
+ |gpu_id                             |在基于CNN的障碍物预测步骤中使用的GPU设备的ID。            |0          |
+ |feature_param {width}              |2D网格的X轴上的单元格数。                      |512        |
+ |feature_param {height}             |2D网格的Y轴上的单元格数。                     |512        |
+ |feature_param {range}              |2D格栅相对于原点（LiDAR传感器）的范围。             |60 meters  |
+
+```c++
+/// file in apollo/master/modules/perception/obstacle/lidar/segmentation/cnnseg/cnn_segmentation.cc
+bool CNNSegmentation::Segment(const pcl_util::PointCloudPtr& pc_ptr,
+                              const pcl_util::PointIndices& valid_indices,
+                              const SegmentationOptions& options,
+                              vector<ObjectPtr>* objects) {
+  // generate raw features
+  ...
+  // network forward process
+  ...
+  // clutser points and construct segments/objects
+  ...
+  // post process
+  cluster2d_->Filter(*confidence_pt_blob_, *height_pt_blob_);
+
+  cluster2d_->Classify(*class_pt_blob_);
+
+  cluster2d_->GetObjects(confidence_thresh, height_thresh, min_pts_num, objects);
+}
+```
+
+Filter和Classify函数代码很简单，前者计算了每个候选物体集群的平均分数和高度，后者则计算了每个候选物体集群k类物体分类对应的平均置信度分数以及所属物体类别(对应最大平均置信度分数那一类)。这里不贴出来做介绍了。
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/segmentation/cnnseg/cluster2d.h
+class Cluster2D {
+public:
+  void GetObjects(const float confidence_thresh, const float height_thresh, const int min_pts_num, std::vector<ObjectPtr>* objects) {
+
+    for (size_t i = 0; i < point2grid_.size(); ++i) {
+      int grid = point2grid_[i];
+      int obstacle_id = id_img_[grid];
+      int point_id = valid_indices_in_pc_->at(i);
+      // select obstacles which averaged score greater equal than confidence_thresh(0.1)
+      // and averaged height in the interval
+      if (obstacle_id >= 0 && obstacles_[obstacle_id].score >= confidence_thresh) {
+        if (height_thresh < 0 || pc_ptr_->points[point_id].z <= obstacles_[obstacle_id].height + height_thresh) {
+          obstacles_[obstacle_id].cloud->push_back(pc_ptr_->points[point_id]);
+        }
+      }
+    }
+    
+    // select obstacles which has minimal points at least min_pts_num(3)
+    for (size_t obstacle_id = 0; obstacle_id < obstacles_.size(); obstacle_id++) {
+      Obstacle* obs = &obstacles_[obstacle_id];
+      if (static_cast<int>(obs->cloud->size()) < min_pts_num) {
+        continue;
+      }
+      apollo::perception::ObjectPtr out_obj(new apollo::perception::Object);
+      out_obj->cloud = obs->cloud;
+      out_obj->score = obs->score;
+      out_obj->score_type = ScoreType::SCORE_CNN;
+      out_obj->type = GetObjectType(obs->meta_type);
+      out_obj->type_probs = GetObjectTypeProbs(obs->meta_type_probs);
+      objects->push_back(out_obj);
+    }
+  }
+}
+```
+
+从上面的代码中可以看到，GetObjects函数就是做最后的删选，物体置信度评分必须大于0.1，CNN分割并且聚类得到的物体平均高度必须和点云检测高度相差到0.5m以内，最后cluster得到的候选物体集群必须包含足够的网格数，大于3个。
+
+GetObjectType是根据候选物体集群的的类别，匹配对应的类。
+
+GetObjectTypeProbs是根据候选物体集群的的类别，计算该类的置信度分数。
+
+### 2.3  MinBox障碍物边框构建
