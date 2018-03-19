@@ -881,7 +881,7 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 	<th>备注</th>
 </tr>
 <tr>
-	<th rowspan="8">输入</th>
+	<th rowspan="8">输入 [1,8,512,512]</th>
 	<td>channel 0: 单元格中点的最大高度</td>
 	<td>-</td>
 </tr>
@@ -910,8 +910,32 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 	<td>-</td>
 </tr>
 <tr>
-	<td>channel 7/mask: 进制值标示单元格是空还是被占用</td>
+	<td>channel 7: 进制值标示单元格是空还是被占用</td>
 	<td>掩码mask</td>
 </tr>
-
+<tr>
+	<th rowspan="6">输出 [1,12,512,512]</th>
+	<td>channel 0: category_pt,是否是物体</td>
+	<td> Sigmoid激活，并与输入channel 7掩码mask相乘</td>
+</tr>
+<tr>
+	<td>channel 1-2: instance_pt</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 3: confidence_pt</td>
+	<td>Sigmoid激活</td>
+</tr>
+<tr>
+	<td>channel 4-8: classify_pt</td>
+	<td>Sigmoid激活</td>
+</tr>
+<tr>
+	<td>channel 9-10: heading_pt</td>
+	<td>-</td>
+</tr>
+<tr>
+	<td>channel 11: height_pt</td>
+	<td>-</td>
+</tr>
 </table>
