@@ -874,7 +874,7 @@ inline float Pixel2Pc(int in_pixel, float in_size, float out_range) {
 
 接下去我们对整个网络的输入与输出做一个表格的总结：
 
-<table border="1">
+<table border="5">
 <tr>
 	<th>类型</th>
 	<th>内容</th>
