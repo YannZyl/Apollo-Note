@@ -1515,7 +1515,8 @@ public:
 在进入正式的代码详解以前，这里有几个知识点需要我们了解。
 
 假设向量a=(x0,y0)，向量b=(x1,y1)，那么有
-- 两个向量的点乘, a·b = x0x1 + y0y1
+- 两个向量的点乘, a·b = x0x1 + y0y1\
+- 计算向量a在向量b上的投影: v = a·b/(b^2)·b，投影点的坐标就是v+(b.x, b.y)
 - 两个向量的叉乘, axb = |a|·|b|sin(theta) = x0y1 - x1y0，叉乘方向与ab平面垂直，遵循右手法则。**叉乘模大小另一层意义是: ab向量构成的平行四边形面积**
 
 **如果两个向量a，b共起点，那么axb小于0，那么a to b的逆时针夹角大于180度；等于则共线；大于0，a to b的逆时针方向夹角小于180度。**
@@ -1599,6 +1600,103 @@ void MinBoxObjectBuilder::ReconstructPolygon(const Eigen::Vector3d& ref_ct, Obje
 }
 ```
 
-当计算得到`max_point`和`min_point`后就需要执行这段代码，这段代码是比较难理解的，为什么需要对每条边做一个条件筛选？
+当计算得到`max_point`和`min_point`后就需要执行这段代码，这段代码是比较难理解的，为什么需要对每条边做一个条件筛选？请看下图
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/minbox_edge_selection.png)
+
+**上图中A演示了这段代码对一个汽车的点云多边形进行处理，最后的处理结果可以看到只有Edge45、Edge56、Edge67是有效的，最终会被计入`total_len`和`max_dist`。而且你会发现这些边都是在`line(max_point-min_point)`这条分界线的一侧，而且是靠近lidar这一侧。说明了靠近lidar这一侧点云检测效果好，边稳定；而背离lidar那一侧，会因为遮挡原因，往往很难(有时候不可能)得到真正的顶点，如上图B所示。**
+
+经过这么分析，其实上述的代码理解起来还是比较能接受的，希望能帮到你。
 
 (2) Step2：投影边长Box计算
+
+投影边长Box计算由`ComputeAreaAlongOneEdge`函数完成，分析这个函数的代码：
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/object_builder/min_box/min_box.cc
+double MinBoxObjectBuilder::ComputeAreaAlongOneEdge(
+    ObjectPtr obj, size_t first_in_point, Eigen::Vector3d* center,
+    double* lenth, double* width, Eigen::Vector3d* dir) {
+  // first for
+  std::vector<Eigen::Vector3d> ns;
+  Eigen::Vector3d v(0.0, 0.0, 0.0);      // 记录以(first_in_point,first_in_point+1)两个定点为边，所有点投影，距离这条边最远的那个点
+  Eigen::Vector3d vn(0.0, 0.0, 0.0);     // 最远的点在(first_in_point,first_in_point+1)这条边上的投影坐标
+  Eigen::Vector3d n(0.0, 0.0, 0.0);      // 用于临时存储
+  double len = 0;
+  double wid = 0;
+  size_t index = (first_in_point + 1) % obj->polygon.points.size();
+  for (size_t i = 0; i < obj->polygon.points.size(); ++i) {
+    if (i != first_in_point && i != index) {
+      // o = obj->polygon.points[i]
+      // a = obj->polygon.points[first_in_point]
+      // b = obj->polygon.points[first_in_point+1]
+      // 计算向量ao在ab向量上的投影，根据公式:k = ao·ab/(ab^2), 计算投影点坐标，根据公式k·ab+(ab.x, ab.y)
+      double k =  ((a[0] - o[0]) * (b[0] - a[0]) + (a[1] - o[1]) * (b[1] - a[1]));
+      k = k / ((b[0] - a[0]) * (b[0] - a[0]) + (b[1] - a[1]) * (b[1] - a[1]));
+      k = k * -1;
+      n[0] = (b[0] - a[0]) * k + a[0];
+      n[1] = (b[1] - a[1]) * k + a[1];
+      n[2] = 0;
+      // 计算由ab作为边，o作为顶点的平行四边形的面积,利用公式|ao x ab|，叉乘的模就是四边形的面积，
+      Eigen::Vector3d edge1 = o - b;
+      Eigen::Vector3d edge2 = a - b;
+      double height = fabs(edge1[0] * edge2[1] - edge2[0] * edge1[1]);
+      // 利用公式： 面积/length(ab)就是ab边上的高，即o到ab边的垂直距离， 记录最大的高
+      height = height / sqrt(edge2[0] * edge2[0] + edge2[1] * edge2[1]);
+      if (height > wid) {
+        wid = height;
+        v = o;
+        vn = n;
+      }
+    } else {
+      ...
+    }
+    ns.push_back(n);
+  }
+}
+```
+
+从上面的部分代码可以看得出，`ComputeAreaAlongOneEdge`函数接受的输入包括多边形顶点集合，起始边`first_in_point`。代码将以`first_in_point`和`first_in_point+1`两个顶点构建一条边，将集合中其他点都投影到这条边上，并计算顶点距离这条边的高，也就是垂直距离。最终的结果保存到`ns`中。代码中`k`的计算利用了两个向量点乘来计算投影点的性质；`height`的计算利用了两个向量叉乘的模等于两个向量组成的四边形面积的性质。
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/object_builder/min_box/min_box.cc
+double MinBoxObjectBuilder::ComputeAreaAlongOneEdge(
+  // first for
+  ...
+  // second for
+  size_t point_num1 = 0;
+  size_t point_num2 = 0;
+  // 遍历first_in_point和first_in_point+1两个点以外的，其他点的投影高，选择height最大的点，来一起组成Box
+  // 这两个for循环是寻找ab边上相聚最远的投影点，因为要把所有点都包括到Box中，所以Box沿着ab边的边长就是最远两个点的距离，可以参考边框构建。
+  for (size_t i = 0; i < ns.size() - 1; ++i) {
+    Eigen::Vector3d p1 = ns[i];
+    for (size_t j = i + 1; j < ns.size(); ++j) {
+      Eigen::Vector3d p2 = ns[j];
+      double dist = sqrt((p1[0] - p2[0]) * (p1[0] - p2[0]) + (p1[1] - p2[1]) * (p1[1] - p2[1]));
+      if (dist > len) {
+        len = dist;
+        point_num1 = i;
+        point_num2 = j;
+      }
+    }
+  }
+  // vp1和vp2代表了Box的ab边对边的那条边的两个顶点，分别在v的两侧，方向和ab方向一致。
+  Eigen::Vector3d vp1 = v + ns[point_num1] - vn;
+  Eigen::Vector3d vp2 = v + ns[point_num2] - vn;
+  // 计算中心点和面积
+  (*center) = (vp1 + vp2 + ns[point_num1] + ns[point_num2]) / 4;
+  (*center)[2] = obj->polygon.points[0].z;
+  if (len > wid) {
+    *dir = ns[point_num2] - ns[point_num1];
+  } else {
+    *dir = vp1 - ns[point_num1];
+  }
+  *lenth = len > wid ? len : wid;
+  *width = len > wid ? wid : len;
+  return (*lenth) * (*width);
+}
+```
+
+剩下的代码就是计算Box的四个顶点坐标，以及他的面积Area。
+
+综上所述，Box经过上述(1)(2)两个阶段，可以很清晰的得到每条有效边(靠近lidar一侧，在`min_point`和`max_point`之间)对应的Box四个顶点坐标、宽、高。最终选择Box面积最小的作为障碍物预测Box。这个过程的代码部分在理解上存在一定难度，经过本节的讲解，应该做MinBox边框构建有了一定的了解。
