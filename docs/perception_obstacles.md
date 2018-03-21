@@ -1459,13 +1459,13 @@ public:
 
   void PerformReconstruction2dxy(PointCloudPtr hull, std::vector<pcl::Vertices> *polygons, bool fill_polygon_data = false) {  
     coordT *points = reinterpret_cast<coordT *>(calloc(indices_->size() * dimension, sizeof(coordT)));
-    // Build input data, using appropriate projection
+    // step1. Build input data, using appropriate projection
     int j = 0;
     for (size_t i = 0; i < indices_->size(); ++i, j += dimension) {
       points[j + 0] = static_cast<coordT>(input_->points[(*indices_)[i]].x);
       points[j + 1] = static_cast<coordT>(input_->points[(*indices_)[i]].y);
     }
-    // Compute convex hull
+    // step2. Compute convex hull
     int exitcode = qh_new_qhull(dimension, static_cast<int>(indices_->size()), points, ismalloc, const_cast<char *>(flags), outfile, errfile);
     std::vector<std::pair<int, Eigen::Vector4f>, Eigen::aligned_allocator<std::pair<int, Eigen::Vector4f>>> idx_points(num_vertices);
     FORALLvertices {
@@ -1473,7 +1473,7 @@ public:
       idx_points[i].first = qh_pointid(vertex->point);
       ++i;
     }
-    // Sort
+    // step3. Sort
     Eigen::Vector4f centroid;
     pcl::compute3DCentroid(*hull, centroid);
     for (size_t j = 0; j < hull->points.size(); j++) {
@@ -1495,7 +1495,7 @@ public:
 
 1. 构建输入数据，将输入的点云复制到coordT \*points做处理
 2. 计算障碍物点云的凸包，得到的结果是多边形顶点。调用`qh_new_qhull`函数
-3. 顶点排序，从[pcl::comparePoints2D/Line59](http://docs.pointclouds.org/trunk/surface_2include_2pcl_2surface_2convex__hull_8h_source.html)可以看到排序是角度越大越靠前，atan2函数的结果是[-pi,pi]
+3. 顶点排序，从[pcl::comparePoints2D/Line59](http://docs.pointclouds.org/trunk/surface_2include_2pcl_2surface_2convex__hull_8h_source.html)可以看到排序是角度越大越靠前，atan2函数的结果是[-pi,pi]。所以就相当于是顺时针对顶点进行排序。
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/minbox_polygons.png)
 
@@ -1503,4 +1503,102 @@ public:
 
 #### 2.3.2 MinBox构建--边框构建
 
-这个过程有部分代码块是比较难理解的，这里我将一一进行解释，希望能够让大家理解。
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/minbox_box.png)
+
+边框构建的大致思想是对过程中1得到的多边形的每一条边，将剩下的所有点都投影到这条边上可以计算边框Box的一条边长度(最远的两个投影点距离)，同时选择距离该条边最远的点计算Box的高，这样就可以得到一个Box(上图case1-7分别是以这个多边形7条边作投影得到的7个Box)，最终选择Box面积最小的边框作为障碍物的边框。上图中case7得到的Box面积最小，所以case7中的Box就是最终障碍物的边框。当边框确定以后，就可以得到障碍物的长度length(大边长)，宽度(小边长)，方向(大边上对应的方向)，高度（点云的平均高度，CNN分割与后期处理阶段得到）。
+
+但是实际这个过程有部分代码块是比较难理解的，而且加入了很多实际问题来优化这个过程。这里我将对这些问题一一进行解释，希望能够让大家理解。根据代码我简单地将这个过程归结为3步：
+
+1. 投影边长的选择(为什么要选择？因为背对lidar那一侧的点云是稀疏的，那一侧的多边形顶点是不可靠的，不用来计算Box)
+2. 每个投影边长计算Box
+
+在进入正式的代码详解以前，这里有几个知识点需要我们了解。
+
+假设向量a=(x0,y0)，向量b=(x1,y1)，那么有
+- 两个向量的点乘, a·b = x0x1 + y0y1
+- 两个向量的叉乘, axb = |a|·|b|sin(theta) = x0y1 - x1y0，叉乘方向与ab平面垂直，遵循右手法则。**叉乘模大小另一层意义是: ab向量构成的平行四边形面积**
+
+**如果两个向量a，b共起点，那么axb小于0，那么a to b的逆时针夹角大于180度；等于则共线；大于0，a to b的逆时针方向夹角小于180度。**
+
+接下来我们就正式的解剖`ReconstructPolygon`Box构建的代码
+
+(1) Step1：投影边长的选择
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/object_builder/min_box/min_box.cc
+void MinBoxObjectBuilder::ReconstructPolygon(const Eigen::Vector3d& ref_ct, ObjectPtr obj) {
+  // compute max_point and min_point
+  size_t max_point_index = 0;
+  size_t min_point_index = 0;
+  Eigen::Vector3d p;
+  p[0] = obj->polygon.points[0].x;
+  p[1] = obj->polygon.points[0].y;
+  p[2] = obj->polygon.points[0].z;
+  Eigen::Vector3d max_point = p - ref_ct;
+  Eigen::Vector3d min_point = p - ref_ct;
+  for (size_t i = 1; i < obj->polygon.points.size(); ++i) {
+    Eigen::Vector3d p;
+    p[0] = obj->polygon.points[i].x;
+    p[1] = obj->polygon.points[i].y;
+    p[2] = obj->polygon.points[i].z;
+    Eigen::Vector3d ray = p - ref_ct;
+    // clock direction
+    if (max_point[0] * ray[1] - ray[0] * max_point[1] < EPSILON) {
+      max_point = ray;
+      max_point_index = i;
+    }
+    // unclock direction
+    if (min_point[0] * ray[1] - ray[0] * min_point[1] > EPSILON) {
+      min_point = ray;
+      min_point_index = i;
+    }
+  }
+}
+```
+
+首先我们看到这一段代码，第一眼看过去是计算`min_point`和`max_point`两个角点，那么这个角点到底是什么意思呢？里面这个关于`EPSILON`的比较条件代表了什么，下面我们图。有一个前提我们已经在polygons多边形角点计算中可知：obj的polygon中所有角点都是顺时针按照arctan角度由大到小排序。那么这个过程我们可以从下面的图中了解到作用：
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/minbox_maxminpt.png)
+
+图中叉乘与0(EPSILON)的大小就是根据前面提到的，两个向量的逆时针夹角。从上图我们可以很清晰的看到：**`max_point`和`min_point`就代表了lidar能检测到障碍物的两个极端点！**
+
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/object_builder/min_box/min_box.cc
+void MinBoxObjectBuilder::ReconstructPolygon(const Eigen::Vector3d& ref_ct, ObjectPtr obj) {
+  // compute max_point and min_point
+  ...
+  // compute valid edge
+  Eigen::Vector3d line = max_point - min_point;
+  double total_len = 0;
+  double max_dis = 0;
+  bool has_out = false;
+  for (size_t i = min_point_index, count = 0; count < obj->polygon.points.size(); i = (i + 1) % obj->polygon.points.size(), ++count) {
+    //Eigen::Vector3d p_x = obj->polygon.point[i]
+    size_t j = (i + 1) % obj->polygon.points.size();
+    if (j != min_point_index && j != max_point_index) {
+      // Eigen::Vector3d p = obj->polygon.points[j];
+      Eigen::Vector3d ray = p - min_point;
+      if (line[0] * ray[1] - ray[0] * line[1] < EPSILON) {
+        ...
+      }else {
+        ...
+      }
+    } else if ((i == min_point_index && j == max_point_index) || (i == max_point_index && j == min_point_index)) {
+      ...
+    } else if (j == min_point_index || j == max_point_index) {
+      // Eigen::Vector3d p = obj->polygon.points[j];
+      Eigen::Vector3d ray = p_x - min_point;
+      if (line[0] * ray[1] - ray[0] * line[1] < EPSILON) {
+        ...
+      } else {
+        ...
+      }
+    }
+  }
+}
+```
+
+当计算得到`max_point`和`min_point`后就需要执行这段代码，这段代码是比较难理解的，为什么需要对每条边做一个条件筛选？
+
+(2) Step2：投影边长Box计算
