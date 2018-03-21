@@ -1369,3 +1369,138 @@ GetObjectType是根据候选物体集群的的类别，匹配对应的类。
 GetObjectTypeProbs是根据候选物体集群的的类别，计算该类的置信度分数。
 
 ### 2.3  MinBox障碍物边框构建
+
+>对象构建器组件为检测到的障碍物建立一个边界框。因为LiDAR传感器的遮挡或距离，形成障碍物的点云可以是稀疏的，并且仅覆盖一部分表面。因此，盒构建器将恢复给定多边形点的完整边界框。即使点云稀疏，边界框的主要目的还是预估障碍物（例如，车辆）的方向。同样地，边框也用于可视化障碍物。
+>
+>算法背后的想法是找到给定多边形点边缘的所有区域。在以下示例中，如果AB是边缘，则Apollo将其他多边形点投影到AB上，并建立具有最大距离的交点对，这是属于边框的边缘之一。然后直接获得边界框的另一边。通过迭代多边形中的所有边，在以下图4所示，Apollo确定了一个6边界边框，将选择具有最小面积的方案作为最终的边界框。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/object_building.png)
+
+这部分代码看了比较久，有些地方一直没想明白，直到推理了很久才找到了一种合适的说法，下面我们依旧从代码入手，一步步解析障碍物边框构建的流程。
+
+上一步CNN分割与后期处理，可以得到lidar一定区域内的障碍物集群。接下去我们将对这些障碍物集群建立其标定框。标定框的作用除了标识物体，还有一个作用就是标记障碍物的长length，宽width，高height。其中规定长length大于宽width，障碍物方向就是长的方向direction。MinBox构建过程如下：
+
+- 计算障碍物2d投影(高空鸟瞰xy平面)下的多边形polygon(如下图B)
+- 根据上述多边形，计算最适边框(如下图C)
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/minbox_framework.png)
+
+大致的代码框架如下：
+
+```c++
+/// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
+void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
+  /// call hdmap to get ROI
+  ...
+  /// call roi_filter
+  ...
+  /// call segmentor
+  ...
+  /// call object builder
+  if (object_builder_ != nullptr) {
+    ObjectBuilderOptions object_builder_options;
+    if (!object_builder_->Build(object_builder_options, &objects)) {
+      ...
+    }
+  }
+}
+
+/// file in apollo/modules/perception/obstacle/lidar/object_builder/min_box/min_box.cc
+bool MinBoxObjectBuilder::Build(const ObjectBuilderOptions& options, std::vector<ObjectPtr>* objects) {
+  for (size_t i = 0; i < objects->size(); ++i) {
+    if ((*objects)[i]) {
+      BuildObject(options, (*objects)[i]);
+    }
+  }
+}
+void MinBoxObjectBuilder::BuildObject(ObjectBuilderOptions options, ObjectPtr object) {
+  ComputeGeometricFeature(options.ref_center, object);
+}
+void MinBoxObjectBuilder::ComputeGeometricFeature(const Eigen::Vector3d& ref_ct, ObjectPtr obj) {
+  // step 1: compute 2D xy plane's polygen
+  ComputePolygon2dxy(obj);
+  // step 2: construct box
+  ReconstructPolygon(ref_ct, obj);
+}
+```
+
+上述是MinBox障碍物边框构建的主题框架代码，构建的两个过程分别在`ComputePolygon2dxy`和`ReconstructPolygon`函数完成，下面篇幅我们就具体深入这两个函数，详细了解一下Apollo对障碍物构建的一个流程，和其中一些令人费解的代码段。
+
+#### 2.3.1 MinBox构建--计算2DXY平面投影
+
+这个阶段主要作用是障碍物集群做XY平面下的凸包多边形计算，最终得到这个多边形的一些角点。第一部分相对比较简单，没什么难点，计算凸包是调用PCL库的`ConvexHull`组件(具体请参考[pcl::ConvexHull](http://docs.pointclouds.org/trunk/classpcl_1_1_convex_hull.html))。下面是Apollo的凸包计算代码：
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/object_builder/min_box/min_box.cc
+void MinBoxObjectBuilder::ComputePolygon2dxy(ObjectPtr obj) {
+  ...
+  ConvexHull2DXY<pcl_util::Point> hull;
+  hull.setInputCloud(pcd_xy);
+  hull.setDimension(2);
+  std::vector<pcl::Vertices> poly_vt;
+  PointCloudPtr plane_hull(new PointCloud);
+  hull.Reconstruct2dxy(plane_hull, &poly_vt);
+
+  if (poly_vt.size() == 1u) {
+    std::vector<int> ind(poly_vt[0].vertices.begin(), poly_vt[0].vertices.end());
+    TransformPointCloud(plane_hull, ind, &obj->polygon);
+  } else {
+    ...
+  }
+}
+
+/// file in apollo/modules/perception/common/convex_hullxy.h
+template <typename PointInT>
+class ConvexHull2DXY : public pcl::ConvexHull<PointInT> {
+public:
+  void Reconstruct2dxy(PointCloudPtr hull, std::vector<pcl::Vertices> *polygons) {
+    PerformReconstruction2dxy(hull, polygons, true);
+  }
+
+  void PerformReconstruction2dxy(PointCloudPtr hull, std::vector<pcl::Vertices> *polygons, bool fill_polygon_data = false) {  
+    coordT *points = reinterpret_cast<coordT *>(calloc(indices_->size() * dimension, sizeof(coordT)));
+    // Build input data, using appropriate projection
+    int j = 0;
+    for (size_t i = 0; i < indices_->size(); ++i, j += dimension) {
+      points[j + 0] = static_cast<coordT>(input_->points[(*indices_)[i]].x);
+      points[j + 1] = static_cast<coordT>(input_->points[(*indices_)[i]].y);
+    }
+    // Compute convex hull
+    int exitcode = qh_new_qhull(dimension, static_cast<int>(indices_->size()), points, ismalloc, const_cast<char *>(flags), outfile, errfile);
+    std::vector<std::pair<int, Eigen::Vector4f>, Eigen::aligned_allocator<std::pair<int, Eigen::Vector4f>>> idx_points(num_vertices);
+    FORALLvertices {
+      hull->points[i] = input_->points[(*indices_)[qh_pointid(vertex->point)]];
+      idx_points[i].first = qh_pointid(vertex->point);
+      ++i;
+    }
+    // Sort
+    Eigen::Vector4f centroid;
+    pcl::compute3DCentroid(*hull, centroid);
+    for (size_t j = 0; j < hull->points.size(); j++) {
+      idx_points[j].second[0] = hull->points[j].x - centroid[0];
+      idx_points[j].second[1] = hull->points[j].y - centroid[1];
+    }
+    std::sort(idx_points.begin(), idx_points.end(), pcl::comparePoints2D);
+    polygons->resize(1);
+    (*polygons)[0].vertices.resize(hull->points.size());
+    for (int j = 0; j < static_cast<int>(hull->points.size()); j++) {
+      hull->points[j] = input_->points[(*indices_)[idx_points[j].first]];
+      (*polygons)[0].vertices[j] = static_cast<unsigned int>(j);
+    }
+  }
+}
+```
+
+从上面代码的注释我们可以很清楚的了解到这个多边形顶点的求解流程，具体函数由`PerformReconstruction2dxy`函数完成，这个函数其实跟PCL库自带的很像[pcl::ConvexHull<PointInT>::performReconstruction2D/Line76](http://docs.pointclouds.org/trunk/convex__hull_8hpp_source.html)，其实Apollo开发人员几乎将pcl库的`performReconstruction2D`原封不动的搬过来了，去掉了一些冗余额外的信息。这个过程主要有：
+
+1. 构建输入数据，将输入的点云复制到coordT \*points做处理
+2. 计算障碍物点云的凸包，得到的结果是多边形顶点。调用`qh_new_qhull`函数
+3. 顶点排序，从[pcl::comparePoints2D/Line59](http://docs.pointclouds.org/trunk/surface_2include_2pcl_2surface_2convex__hull_8h_source.html)可以看到排序是角度越大越靠前，atan2函数的结果是[-pi,pi]
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/minbox_polygons.png)
+
+这个过程只要自己稍加关注一点就可以了解他的原理和过程，这里不再过度解释每个模块。上图是计算多边形交点的流程示意图。
+
+#### 2.3.2 MinBox构建--边框构建
+
+这个过程有部分代码块是比较难理解的，这里我将一一进行解释，希望能够让大家理解。
