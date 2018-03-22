@@ -1856,7 +1856,7 @@ void HmObjectTracker::ConstructTrackedObjects(
 - `TransformTrackedObject`函数进行跟踪物体的方向、中心、原始点云、多边形角点、重心等进行坐标系转换。lidar坐标系变换到local ENU坐标系。
 - 根据lidar的世界坐标系坐标查询高精地图HD map计算车道线方向
 
-(3) 第三步就是讲第二步中创建的跟踪对象加入到跟踪对象列表中，正式进行跟踪。
+(3) 第三步就是讲第二步中创建的跟踪对象(TrackedObject)建立跟踪，正式进行跟踪(加入进ObjectTrack)。
 
 ```c++
 /// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
@@ -1871,3 +1871,5 @@ void HmObjectTracker::CreateNewTracks(
   }
 }
 ```
+
+同时函数`CollectTrackedResults`会将当前正在跟踪的对象(世界坐标系坐标形式)保存到向量中，该部分代码比较简单就不贴出来了。
