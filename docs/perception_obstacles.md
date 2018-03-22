@@ -1700,3 +1700,174 @@ double MinBoxObjectBuilder::ComputeAreaAlongOneEdge(
 剩下的代码就是计算Box的四个顶点坐标，以及他的面积Area。
 
 综上所述，Box经过上述(1)(2)两个阶段，可以很清晰的得到每条有效边(靠近lidar一侧，在`min_point`和`max_point`之间)对应的Box四个顶点坐标、宽、高。最终选择Box面积最小的作为障碍物预测Box。这个过程的代码部分在理解上存在一定难度，经过本节的讲解，应该做MinBox边框构建有了一定的了解。
+
+### 2.4 HM对象跟踪
+
+>HM对象跟踪器跟踪分段检测到的障碍物。通常，它通过将当前检测与现有跟踪列表相关联，来形成和更新跟踪列表，如不再存在，则删除旧的跟踪列表，并在识别出新的检测时生成新的跟踪列表。 更新后的跟踪列表的运动状态将在关联后进行估计。 在HM对象跟踪器中，匈牙利算法(Hungarian algorithm)用于检测到跟踪关联，并采用鲁棒卡尔曼滤波器(Robust Kalman Filter) 进行运动估计。
+
+上述是Apollo官方文档对HM对象跟踪的描述，这部分意思比较明了，主要的跟踪流程可以分为:
+
+- 预处理。(lidar->local ENU坐标系变换、跟踪对象创建、跟踪目标保存)
+- 卡尔曼滤波器铝箔，跟踪物体预测
+- 匈牙利算法比配，关联检测物体和跟踪物体
+- 更新跟踪物体信息
+
+进入HM物体跟踪的入口依旧在`LidarProcessSubnode::OnPointCloud`中：
+
+```c++
+/// file in apollo/modules/perception/obstacle/onboard/lidar_process_subnode.cc
+void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) {
+  /// call hdmap to get ROI
+  ...
+  /// call roi_filter
+  ...
+  /// call segmentor
+  ...
+  /// call object builder
+  ...
+  /// call tracker
+  if (tracker_ != nullptr) {
+    TrackerOptions tracker_options;
+    tracker_options.velodyne_trans = velodyne_trans;
+    tracker_options.hdmap = hdmap;
+    tracker_options.hdmap_input = hdmap_input_;
+    if (!tracker_->Track(objects, timestamp_, tracker_options, &(out_sensor_objects->objects))) {
+    ...
+    }
+  }
+}
+```
+
+#### 2.4.1 预处理
+
+```
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
+bool HmObjectTracker::Track(const std::vector<ObjectPtr>& objects,
+                            double timestamp, const TrackerOptions& options,
+                            std::vector<ObjectPtr>* tracked_objects) {
+  // A. track setup
+  if (!valid_) {
+    valid_ = true;
+    return Initialize(objects, timestamp, options, tracked_objects);
+  }
+  // B. preprocessing
+  // B.1 transform given pose to local one
+  TransformPoseGlobal2Local(&velo2world_pose);
+  // B.2 construct objects for tracking
+  std::vector<TrackedObjectPtr> transformed_objects;
+  ConstructTrackedObjects(objects, &transformed_objects, velo2world_pose,options);
+}
+
+bool HmObjectTracker::Initialize(const std::vector<ObjectPtr>& objects,
+                                 const double& timestamp,
+                                 const TrackerOptions& options,
+                                 std::vector<ObjectPtr>* tracked_objects) {
+  global_to_local_offset_ = Eigen::Vector3d(-velo2world_pose(0, 3), -velo2world_pose(1, 3), -velo2world_pose(2, 3));
+  // B. preprocessing
+  // B.1 coordinate transformation
+  TransformPoseGlobal2Local(&velo2world_pose);
+  // B.2 construct tracked objects
+  std::vector<TrackedObjectPtr> transformed_objects;
+  ConstructTrackedObjects(objects, &transformed_objects, velo2world_pose, options);
+  // C. create tracks
+  CreateNewTracks(transformed_objects, unassigned_objects);
+  time_stamp_ = timestamp;
+  // D. collect tracked results
+  CollectTrackedResults(tracked_objects);
+  return true;
+}
+```
+
+预处理阶段主要分两个模块：A.跟踪建立(track setup)和B.预处理(preprocess)。跟踪建立过程，主要是对上述得到的物体对象进行跟踪目标的建立，这是Track第一次被调用的时候进行的，后续只需要进行跟踪对象更新即可。建立过程相对比较简单，主要包含：
+
+1. 物体对象坐标系转换。(原先的lidar坐标系-->lidar局部ENU坐标系/有方向性)
+2. 对每个物体创建跟踪对象，加入跟踪列表。
+3. 记录现在被跟踪的对象
+
+从上面代码来看，预处理阶段两模块重复度很高，这里我们就介绍`Initialize`对象跟踪建立函数。
+
+(1) 第一步是进行坐标系的变换，这里我们注意到一个平移向量`global_to_local_offset_`，他是lidar坐标系到世界坐标系的变换矩阵`velo2world_trans`的平移成分，前面高精地图ROI过滤器小节我们讲过: **local局部ENU坐标系跟world世界坐标系之间只有平移成分，没有旋转。所以这里取了转变矩阵的平移成分，其实就是world世界坐标系转换到lidar局部ENU坐标系的平移矩阵(变换矩阵)。P_local = P_world + global_to_local_offset_**
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
+void HmObjectTracker::TransformPoseGlobal2Local(Eigen::Matrix4d* pose) {
+  (*pose)(0, 3) += global_to_local_offset_(0);
+  (*pose)(1, 3) += global_to_local_offset_(1);
+  (*pose)(2, 3) += global_to_local_offset_(2);
+}
+```
+
+从上面的`TransformPoseGlobal2Local`函数代码我们可以得到一个没有平移成分，只有旋转成分的变换矩阵`velo2world_pose`，这个矩阵有什么作用？很简单，**这个矩阵就是lidar坐标系到lidar局部ENU坐标系的转换矩阵。**
+
+(2) 第二步中需要根据前面CNN检测到的物体来创建跟踪对象，也就是将`Object`包装到`TrackedObject`中，那我们先来看一下`TrackedObject`类里面的成分：
+
+| 名称 | 备注 |
+| ---- | ---- |
+| ObjectPtr object_ptr | Object对象指针 |
+| Eigen::Vector3f barycenter | 重心，取该类所有点云xyz的平均值得到 |
+| Eigen::Vector3f center | 中心， bbox4个角点外加平均高度计算得到 |
+| Eigen::Vector3f velocity | 速度，卡尔曼滤波器预测得到 |
+| Eigen::Matrix3f velocity_uncertainty | 不确定速度 |
+| Eigen::Vector3f acceleration | 加速度 | 
+| ObjectType type | 物体类型，行人、自行车、车辆等 |
+| float association_score | -- |
+
+从上面表格可以看到，`TrackedObject`封装了`Object`，并且只增加了少量速度，加速度等额外信息。
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
+void HmObjectTracker::ConstructTrackedObjects(
+    const std::vector<ObjectPtr>& objects,
+    std::vector<TrackedObjectPtr>* tracked_objects, const Eigen::Matrix4d& pose,
+    const TrackerOptions& options) {
+  int num_objects = objects.size();
+  tracked_objects->clear();
+  tracked_objects->resize(num_objects);
+  for (int i = 0; i < num_objects; ++i) {
+    ObjectPtr obj(new Object());
+    obj->clone(*objects[i]);
+    (*tracked_objects)[i].reset(new TrackedObject(obj));                  // create new TrackedObject with object
+    // Computing shape featrue
+    if (use_histogram_for_match_) {
+      ComputeShapeFeatures(&((*tracked_objects)[i]));                     // compute shape feature
+    }
+    // Transforming all tracked objects
+    TransformTrackedObject(&((*tracked_objects)[i]), pose);               // transform coordinate from lidar frame to local ENU frame
+    // Setting barycenter as anchor point of tracked objects
+    Eigen::Vector3f anchor_point = (*tracked_objects)[i]->barycenter;
+    (*tracked_objects)[i]->anchor_point = anchor_point;
+    // Getting lane direction of tracked objects
+    pcl_util::PointD query_pt;                                            // get lidar's world coordinate equals lidar2world_trans's translation part  
+    query_pt.x = anchor_point(0) - global_to_local_offset_(0);
+    query_pt.y = anchor_point(1) - global_to_local_offset_(1);
+    query_pt.z = anchor_point(2) - global_to_local_offset_(2);
+    Eigen::Vector3d lane_dir;
+    if (!options.hdmap_input->GetNearestLaneDirection(query_pt, &lane_dir)) {
+      lane_dir = (pose * Eigen::Vector4d(1, 0, 0, 0)).head(3);            // get nearest line direction from hd map
+    }
+    (*tracked_objects)[i]->lane_direction = lane_dir.cast<float>();
+  }
+}
+```
+
+`ConstructTrackedObjects`是由物体对象来创建跟踪对象的代码，这个过程相对来说比较简单易懂，没大的难点，下面就解释一下具体的功能。
+
+- 针对`vector<ObjectPtr>& objects`中的每个对象，创建对应的`TrackedObject`，并且计算他的shape feature，这个特征计算比较简单，先计算物体xyz三个坐标轴上的最大和最小值，分别将其划分成10等份，对每个点xyz坐标进行bins投影与统计。最后的到的特征就是[x_bins,y_bins,z_bins]一共30维，归一化(除点云数量)后得到最终的shape feature。
+- `TransformTrackedObject`函数进行跟踪物体的方向、中心、原始点云、多边形角点、重心等进行坐标系转换。lidar坐标系变换到local ENU坐标系。
+- 根据lidar的世界坐标系坐标查询高精地图HD map计算车道线方向
+
+(3) 第三步就是讲第二步中创建的跟踪对象加入到跟踪对象列表中，正式进行跟踪。
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
+void HmObjectTracker::CreateNewTracks(
+    const std::vector<TrackedObjectPtr>& new_objects,
+    const std::vector<int>& unassigned_objects) {
+  // Create new tracks for objects without matched tracks
+  for (size_t i = 0; i < unassigned_objects.size(); i++) {
+    int obj_id = unassigned_objects[i];
+    ObjectTrackPtr track(new ObjectTrack(new_objects[obj_id]));
+    object_tracks_.AddTrack(track);
+  }
+}
+```
