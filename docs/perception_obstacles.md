@@ -1708,7 +1708,7 @@ double MinBoxObjectBuilder::ComputeAreaAlongOneEdge(
 上述是Apollo官方文档对HM对象跟踪的描述，这部分意思比较明了，主要的跟踪流程可以分为:
 
 - 预处理。(lidar->local ENU坐标系变换、跟踪对象创建、跟踪目标保存)
-- 卡尔曼滤波器铝箔，跟踪物体预测
+- 卡尔曼滤波器滤波，跟踪物体预测
 - 匈牙利算法比配，关联检测物体和跟踪物体
 - 更新跟踪物体信息
 
@@ -1738,9 +1738,18 @@ void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) 
 }
 ```
 
+在这部分，总共有三个比较绕的对象类，分别是Object、TrackedObject和ObjectTrack，在这里统一说明一下区别：
+
+- Object类：常见的物体类，里面包含物体原始点云、多边形轮廓、物体类别、物体分类置信度、方向、长宽、速度等信息。**全模块通用**。
+- TrackedObject类：封装Object类，记录了跟踪物体类属性，额外包含了中心、重心、速度、加速度、方向等信息。
+- ObjectTrack类：封装了TrackedObject类，是实际的跟踪函数，里面具有对TrackedObject滤波、预测运动趋势等函数。
+
+所以可以看到，跟踪过程需要将原始Object封装成TrackedObject，创立跟踪对象；最后跟踪对象创立跟踪过程ObjectTrack，可以通过ObjectTrack里面的函数来对ObjectTrack所标记的TrackedObject进行跟踪。
+
 #### 2.4.1 预处理
 
-```
+
+```c++
 /// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
 bool HmObjectTracker::Track(const std::vector<ObjectPtr>& objects,
                             double timestamp, const TrackerOptions& options,
