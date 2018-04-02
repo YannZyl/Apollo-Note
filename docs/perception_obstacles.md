@@ -1708,9 +1708,9 @@ double MinBoxObjectBuilder::ComputeAreaAlongOneEdge(
 上述是Apollo官方文档对HM对象跟踪的描述，这部分意思比较明了，主要的跟踪流程可以分为:
 
 - 预处理。(lidar->local ENU坐标系变换、跟踪对象创建、跟踪目标保存)
-- 卡尔曼滤波器滤波，跟踪物体预测
+- 卡尔曼滤波器滤波，预测物体当前位置与速度(卡尔曼滤波阶段1：Predict阶段)
 - 匈牙利算法比配，关联检测物体和跟踪物体
-- 更新跟踪物体信息
+- 卡尔曼滤波，更新跟踪物体位置与速度信息(卡尔曼滤波阶段2：Update阶段)
 
 进入HM物体跟踪的入口依旧在`LidarProcessSubnode::OnPointCloud`中：
 
@@ -1884,7 +1884,7 @@ void HmObjectTracker::CreateNewTracks(
 
 同时函数`CollectTrackedResults`会将当前正在跟踪的对象(世界坐标系坐标形式)保存到向量中，该部分代码比较简单就不贴出来了。
 
-#### 2.4.2 卡尔曼滤波，跟踪物体对象
+#### 2.4.2 卡尔曼滤波，跟踪物体对象(卡尔曼滤波阶段1： Predict)
 
 在预处理阶段，每个物体Object类经过封装以后，产生一个对应的ObjectTrack过程类，里面封装了对应要跟踪的物体(TrackedObject，由Object封装而来)。这个阶段的工作就是对跟踪物体TrackedObject进行卡尔曼滤波并预测其运动方向。
 
@@ -1937,5 +1937,40 @@ void HmObjectTracker::ComputeTracksPredict(std::vector<Eigen::VectorXf>* tracks_
 }
 ```
 
-从代码中我们可以看到，这个过程其实就是对object_tracks_列表中每个物体进行跟踪。object_tracks_是上阶段Object--TrackedObject--ObjectTrack的依次封装。接下去我们就对这个Predict函数进行深层次的挖掘和分析，看看它实现了什么功能。
+从代码中我们可以看到，这个过程其实就是对object_tracks_列表中每个物体调用其Predict函数进行滤波跟踪(object_tracks_是上阶段Object--TrackedObject--ObjectTrack的依次封装)。接下去我们就对这个Predict函数进行深层次的挖掘和分析，看看它实现了卡尔曼过滤器的那个阶段工作。
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/kalman_filter.cc
+Eigen::VectorXf KalmanFilter::Predict(const double& time_diff) {
+  // Compute predict states
+  Eigen::VectorXf predicted_state;
+  predicted_state.resize(6);
+  predicted_state(0) = belief_anchor_point_(0) + belief_velocity_(0) * time_diff;
+  predicted_state(1) = belief_anchor_point_(1) + belief_velocity_(1) * time_diff;
+  predicted_state(2) = belief_anchor_point_(2) + belief_velocity_(2) * time_diff;
+  predicted_state(3) = belief_velocity_(0);
+  predicted_state(4) = belief_velocity_(1);
+  predicted_state(5) = belief_velocity_(2);
+  // Compute predicted covariance
+  Propagate(time_diff);
+  return predicted_state;
+}
+
+void KalmanFilter::Propagate(const double& time_diff) {
+  // Only propagate tracked motion
+  ity_covariance_ += s_propagation_noise_ * time_diff * time_diff;
+}
+```
+
+**从上面两个函数可以明显看到这个阶段就是卡尔曼滤波器的Predict阶段。同时可以看到**：
+
+1. `predicted_state`相当于卡尔曼滤波其中的$X_{t,t-1}$, `belief_anchor_point_`和`belief_velocity_`相当于$X_t$, `ity_covariance_`同时存储$P_t$和$P_{t,t-1}$(Why?可以从上面的卡尔曼滤波器公式看到$P_t$在估测完$P_{t,t-1}$以后就没用了，所以可以覆盖存储，节省部分空间)
+
+2. 状态方程和观测方程其实本质上是一样，也就是相同维度的。都是6维，分别表示重心的xyz坐标和重心xyz的速度。同时在这个应用中，短时间间隔内。当前时刻重心位置=上时刻中心位置 + 上时刻速度\*时间戳，所以可知卡尔曼滤波器中$A_{t,t-1}=1$, $Q=I\*ts^2$
+
+3. 该过程工作:首先利用上时刻的最优估计`belief_anchor_point_`和`belief_velocity_`(等同于$X_{t-1}$)估计出t时刻的状态`predicted_state`(等同于$$X_{t,t-1}); 然后估计当前时刻的协方差矩ity_covariance_($等同于P_{t,t-1}$)。
+
+#### 2.4.3 匈牙利算法比配，关联检测物体和跟踪物体
+
+
 
