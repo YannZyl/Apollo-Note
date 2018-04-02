@@ -1903,7 +1903,7 @@ void HmObjectTracker::CreateNewTracks(
 	- 利用上时刻t-1最优估计$X_{t-1}$预测当前时刻状态$X_{t,t-1}$，这个$X_{t,t-1}$不是t时刻的最优状态，只是估计出来的状态
 	- 利用上时刻t-1最优协方差矩阵$P_{t-1}$预测当前时刻协方差矩阵$P_{t,t-1}$，这个$P_{t,t-1}$也不是t时刻最优协方差
 - Update更新阶段
-	- 利用$X_{t,t-1}$估计出t时刻最优状态$X_t$, $X_t = X_{t,t-1} + H_t[Z_t - C_tX_{t,t-1}], H_t = P_{t,t-1}C^T[C_tP_{t,t-1}{C_t}^T + R]^{-1}$
+	- 利用$X_{t,t-1}$估计出t时刻最优状态$X_t = X_{t,t-1} + H_t[Z_t - C_tX_{t,t-1}]$, 其中$H_t = P_{t,t-1}C^T[C_tP_{t,t-1}{C_t}^T + R]^{-1}$
 	- 利用$P_{t,t-1}$估计出t时刻最优协方差矩阵$P_t = [I - H_tC_t]P_{t,t-1}$
 
 最终t从1开始递归计算k时刻的最优状态$X_k$与最优协方差矩阵$P_t$
@@ -1940,6 +1940,21 @@ void HmObjectTracker::ComputeTracksPredict(std::vector<Eigen::VectorXf>* tracks_
 从代码中我们可以看到，这个过程其实就是对object_tracks_列表中每个物体调用其Predict函数进行滤波跟踪(object_tracks_是上阶段Object--TrackedObject--ObjectTrack的依次封装)。接下去我们就对这个Predict函数进行深层次的挖掘和分析，看看它实现了卡尔曼过滤器的那个阶段工作。
 
 ```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/object_track.cc
+Eigen::VectorXf ObjectTrack::Predict(const double& time_diff) {
+  // Get the predict of filter
+  Eigen::VectorXf filter_predict = filter_->Predict(time_diff);
+  // Get the predict of track
+  Eigen::VectorXf track_predict = filter_predict;
+  track_predict(0) = belief_anchor_point_(0) + belief_velocity_(0) * time_diff;
+  track_predict(1) = belief_anchor_point_(1) + belief_velocity_(1) * time_diff;
+  track_predict(2) = belief_anchor_point_(2) + belief_velocity_(2) * time_diff;
+  track_predict(3) = belief_velocity_(0);
+  track_predict(4) = belief_velocity_(1);
+  track_predict(5) = belief_velocity_(2);
+  return track_predict;
+}
+
 /// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/kalman_filter.cc
 Eigen::VectorXf KalmanFilter::Predict(const double& time_diff) {
   // Compute predict states
@@ -1964,7 +1979,7 @@ void KalmanFilter::Propagate(const double& time_diff) {
 
 **从上面两个函数可以明显看到这个阶段就是卡尔曼滤波器的Predict阶段。同时可以看到**：
 
-1. `predicted_state`相当于卡尔曼滤波其中的$X_{t,t-1}$, `belief_anchor_point_`和`belief_velocity_`相当于$X_t$, `ity_covariance_`同时存储$P_t$和$P_{t,t-1}$(Why?可以从上面的卡尔曼滤波器公式看到$P_t$在估测完$P_{t,t-1}$以后就没用了，所以可以覆盖存储，节省部分空间)
+1. `track_predict/predicted_state`相当于卡尔曼滤波其中的$X_{t,t-1}$, `belief_anchor_point_`和`belief_velocity_`相当于$X_t$, `ity_covariance_`同时存储$P_t$和$P_{t,t-1}$(Why?可以从上面的卡尔曼滤波器公式看到$P_t$在估测完$P_{t,t-1}$以后就没用了，所以可以覆盖存储，节省部分空间)
 
 2. 状态方程和观测方程其实本质上是一样，也就是相同维度的。都是6维，分别表示重心的xyz坐标和重心xyz的速度。同时在这个应用中，短时间间隔内。当前时刻重心位置=上时刻重心位置 + 上时刻速度\*时间差，所以可知卡尔曼滤波器中$A_{t,t-1}\equiv1$, $Q = I\*ts^2$
 
@@ -1972,5 +1987,37 @@ void KalmanFilter::Propagate(const double& time_diff) {
 
 #### 2.4.3 匈牙利算法比配，关联检测物体和跟踪物体
 
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
+bool HmObjectTracker::Track(const std::vector<ObjectPtr>& objects,
+                            double timestamp, const TrackerOptions& options,
+                            std::vector<ObjectPtr>* tracked_objects) {
+  // A. track setup
+  ...
+  // B. preprocessing
+  // B.1 transform given pose to local one
+  ...
+  // B.2 construct objects for tracking
+  ...
+  // C. prediction
+  ...
+  // D. match objects to tracks
+  std::vector<TrackObjectPair> assignments;
+  std::vector<int> unassigned_objects;
+  std::vector<int> unassigned_tracks;
+  std::vector<ObjectTrackPtr>& tracks = object_tracks_.GetTracks();
+  if (matcher_ != nullptr) {
+    matcher_->Match(&transformed_objects, tracks, tracks_predict, &assignments, &unassigned_tracks, &unassigned_objects);
+  }
+  ...
+}
 
+void HmObjectTracker::ComputeTracksPredict(std::vector<Eigen::VectorXf>* tracks_predict, const double& time_diff) {
+  // Compute tracks' predicted states
+  std::vector<ObjectTrackPtr>& tracks = object_tracks_.GetTracks();
+  for (int i = 0; i < no_track; ++i) {
+    (*tracks_predict)[i] = tracks[i]->Predict(time_diff);   // track every tracked object in object_tracks_(ObjectTrack class) 
+  }
+}
+```
 
