@@ -1742,7 +1742,7 @@ void LidarProcessSubnode::OnPointCloud(const sensor_msgs::PointCloud2& message) 
 
 - Object类：常见的物体类，里面包含物体原始点云、多边形轮廓、物体类别、物体分类置信度、方向、长宽、速度等信息。**全模块通用**。
 - TrackedObject类：封装Object类，记录了跟踪物体类属性，额外包含了中心、重心、速度、加速度、方向等信息。
-- ObjectTrack类：封装了TrackedObject类，是实际的跟踪函数，里面具有对TrackedObject滤波、预测运动趋势等函数。
+- ObjectTrack类：封装了TrackedObject类，实际的跟踪解决方案，不仅包含了需要跟踪的物体(TrackedObject)，同时包含了跟踪物体滤波、预测运动趋势等函数。
 
 所以可以看到，跟踪过程需要将原始Object封装成TrackedObject，创立跟踪对象；最后跟踪对象创立跟踪过程ObjectTrack，可以通过ObjectTrack里面的函数来对ObjectTrack所标记的TrackedObject进行跟踪。
 
@@ -1765,6 +1765,7 @@ bool HmObjectTracker::Track(const std::vector<ObjectPtr>& objects,
   // B.2 construct objects for tracking
   std::vector<TrackedObjectPtr> transformed_objects;
   ConstructTrackedObjects(objects, &transformed_objects, velo2world_pose,options);
+  ...
 }
 
 bool HmObjectTracker::Initialize(const std::vector<ObjectPtr>& objects,
@@ -1882,3 +1883,45 @@ void HmObjectTracker::CreateNewTracks(
 ```
 
 同时函数`CollectTrackedResults`会将当前正在跟踪的对象(世界坐标系坐标形式)保存到向量中，该部分代码比较简单就不贴出来了。
+
+#### 2.4.2 卡尔曼滤波，跟踪物体对象
+
+在预处理阶段，每个物体Object类经过封装以后，产生一个对应的ObjectTrack过程类，里面封装了对应要跟踪的物体(TrackedObject，由Object封装而来)。这个阶段的工作就是对跟踪物体TrackedObject进行卡尔曼滤波并预测其运动方向。
+
+首先，在这里我们简单介绍一下卡尔曼滤波的一些基础公式，方便下面理解。
+
+一个系统拥有一个状态方程和一个观测方程。观测方程是我们能宏观看到的一些属性，在这里比如说汽车重心xyz的位置和速度；而状态方程是整个系统里面的一些状态，包含能观测到的属性(如汽车重心xyz的位置和速度)，也可能包含其他一些看不见的属性，这些属性甚至我们都不能去定义它的物理意义。**因此观测方程的属性是状态方程的属性的一部分**现在有：
+
+状态方程: $ X_t = A_{t,t-1}X_{t-1} + W_t,  W_t ~ N(0,Q) $
+观测方程: $ Z_t = C_tX_t + V_t, V_t ~N(0,R) $
+
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
+bool HmObjectTracker::Track(const std::vector<ObjectPtr>& objects,
+                            double timestamp, const TrackerOptions& options,
+                            std::vector<ObjectPtr>* tracked_objects) {
+  // A. track setup
+  ...
+  // B. preprocessing
+  // B.1 transform given pose to local one
+  ...
+  // B.2 construct objects for tracking
+  ...
+  // C. prediction
+  std::vector<Eigen::VectorXf> tracks_predict;
+  ComputeTracksPredict(&tracks_predict, time_diff);
+  ...
+}
+
+void HmObjectTracker::ComputeTracksPredict(std::vector<Eigen::VectorXf>* tracks_predict, const double& time_diff) {
+  // Compute tracks' predicted states
+  std::vector<ObjectTrackPtr>& tracks = object_tracks_.GetTracks();
+  for (int i = 0; i < no_track; ++i) {
+    (*tracks_predict)[i] = tracks[i]->Predict(time_diff);   // track every tracked object in object_tracks_(ObjectTrack class) 
+  }
+}
+```
+
+从代码中我们可以看到，这个过程其实就是对object_tracks_列表中每个物体进行跟踪。object_tracks_是上阶段Object--TrackedObject--ObjectTrack的依次封装。接下去我们就对这个Predict函数进行深层次的挖掘和分析，看看它实现了什么功能。
+
