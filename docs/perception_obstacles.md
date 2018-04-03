@@ -1903,7 +1903,7 @@ void HmObjectTracker::CreateNewTracks(
 	- 利用上时刻t-1最优估计$X_{t-1}$预测当前时刻状态$X_{t,t-1} = A_{t,t-1}X_{t-1}$，这个$X_{t,t-1}$不是t时刻的最优状态，只是估计出来的状态
 	- 利用上时刻t-1最优协方差矩阵$P_{t-1}$预测当前时刻协方差矩阵$P_{t,t-1} = A_{t,t-1}P_{t-1}{A_{t,t-1}}^T + Q$，这个$P_{t,t-1}$也不是t时刻最优协方差
 - Update更新阶段
-	- 利用$X_{t,t-1}$估计出t时刻最优状态$X_t = X_{t,t-1} + H_t[Z_t - C_tX_{t,t-1}]$, 其中$H_t = P_{t,t-1}C^T[C_tP_{t,t-1}{C_t}^T + R]^{-1}$
+	- 利用$X_{t,t-1}$估计出t时刻最优状态$X_t = X_{t,t-1} + H_t[Z_t - C_tX_{t,t-1}]$, 其中$H_t = P_{t,t-1}{C_t}^T[C_tP_{t,t-1}{C_t}^T + R]^{-1}$
 	- 利用$P_{t,t-1}$估计出t时刻最优协方差矩阵$P_t = [I - H_tC_t]P_{t,t-1}$
 
 最终t从1开始递归计算k时刻的最优状态$X_k$与最优协方差矩阵$P_t$
@@ -2012,12 +2012,114 @@ bool HmObjectTracker::Track(const std::vector<ObjectPtr>& objects,
   ...
 }
 
-void HmObjectTracker::ComputeTracksPredict(std::vector<Eigen::VectorXf>* tracks_predict, const double& time_diff) {
-  // Compute tracks' predicted states
-  std::vector<ObjectTrackPtr>& tracks = object_tracks_.GetTracks();
-  for (int i = 0; i < no_track; ++i) {
-    (*tracks_predict)[i] = tracks[i]->Predict(time_diff);   // track every tracked object in object_tracks_(ObjectTrack class) 
-  }
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hungarian_matcher.cc
+void HungarianMatcher::Match(std::vector<TrackedObjectPtr>* objects,
+                             const std::vector<ObjectTrackPtr>& tracks,
+                             const std::vector<Eigen::VectorXf>& tracks_predict,
+                             std::vector<TrackObjectPair>* assignments,
+                             std::vector<int>* unassigned_tracks,
+                             std::vector<int>* unassigned_objects) {
+  // A. computing association matrix
+  Eigen::MatrixXf association_mat(tracks.size(), objects->size());
+  ComputeAssociateMatrix(tracks, tracks_predict, (*objects), &association_mat);
+
+  // B. computing connected components
+  std::vector<std::vector<int>> object_components;
+  std::vector<std::vector<int>> track_components;
+  ComputeConnectedComponents(association_mat, s_match_distance_maximum_,
+                             &track_components, &object_components);
+  // C. matching each sub-graph
+  ...
 }
 ```
 
+这个阶段主要的工作是匹配CNN分割+MinBox检测到的物体和当前ObjectTrack的跟踪物体。主要的工作为：
+
+- A. Object和TrackedObject之间关联矩阵`association_mat`计算
+- B. 子图划分，利用上述的关联矩阵和设定的阈值(两两评分小于阈值则互相关联，即节点之间链接)，将矩阵分割成一系列子图
+- C. 匈牙利算法进行二分图匹配，得到cost最小的(Object,TrackedObject)连接对
+
+1. 关联矩阵`association_mat`计算
+
+经过CNN分割与MinBox构建以后可以得到N个Object，而目前跟踪列表中有M个TrackedObject，所以需要构建一个NxM的关联矩阵，矩阵中每个元素(即关联评分)的计算共分为5个子项。
+
+- 重心位置坐标距离差异评分
+- 物体方向差异评分
+- 标定框尺寸差异评分
+- 点云数量差异评分
+- 外观特征差异评分
+
+最终以0.6，0.2，0.1，0.1，0.5的权重加权求和得到关联评分。
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/track_object_distance.cc
+float TrackObjectDistance::ComputeDistance(const ObjectTrackPtr& track,
+                                           const Eigen::VectorXf& track_predict,
+                                           const TrackedObjectPtr& new_object) {
+  // Compute distance for given trakc & object
+  float location_distance = ComputeLocationDistance(track, track_predict, new_object);
+  float direction_distance = ComputeDirectionDistance(track, track_predict, new_object);
+  float bbox_size_distance = ComputeBboxSizeDistance(track, new_object);
+  float point_num_distance = ComputePointNumDistance(track, new_object);
+  float histogram_distance = ComputeHistogramDistance(track, new_object);
+
+  float result_distance = s_location_distance_weight_ * location_distance +            // s_location_distance_weight_ = 0.6
+                          s_direction_distance_weight_ * direction_distance +          // s_direction_distance_weight_ = 0.2
+                          s_bbox_size_distance_weight_ * bbox_size_distance +          // s_bbox_size_distance_weight_ = 0.1
+                          s_point_num_distance_weight_ * point_num_distance +          // s_point_num_distance_weight_ = 0.1
+                          s_histogram_distance_weight_ * histogram_distance;           // s_histogram_distance_weight_ = 0.5
+  return result_distance;
+}
+```
+
+各个子项的计算方式，这里以文字形式描述，假设：
+Object重心坐标为(x1,y1,z1)，方向为(dx1,dy1,dz1)，bbox尺寸为(l1,w1,h1), shape featrue为30维向量sf1，包含原始点云数量n1
+TrackedObject重心坐标为(x2,y2,z2)，方向为(dx2,dy2,dz2)，bbox尺寸为(l2,w2,h2), shape featrue为30维向量sf2，包含原始点云数量n2
+
+则有：
+
+- 重心位置坐标距离差异评分location_distance计算
+$location_distance = \sqrt{{x1 - x2}^2 + {y1 - y2}^2}$ 
+如果速度太大，则需要用方向向量去正则惩罚，具体可以参考代码
+
+
+- 物体方向差异评分direction_distance计算
+方向差异其实就是计算两个向量的夹角:
+$cos\theta = a·b/(|a|·|b|)$
+夹角越大，差异越大，cos值越小
+夹角越大，差异越大，cos值越大
+
+最后使用1-cos计算评分，差异越小，评分越大。
+
+- 标定框尺寸差异评分bbox_size_distance计算
+代码中首先计算两个量`dot_val_00`和`dot_val_01`：
+
+```c++
+/// file in apollo/master/modules/perception/obstacle/lidar/tracker/hm_tracker/track_object_distance.cc
+float TrackObjectDistance::ComputeBboxSizeDistance(const ObjectTrackPtr& track, const TrackedObjectPtr& new_object) {
+  double dot_val_00 = fabs(old_bbox_dir(0) * new_bbox_dir(0) + old_bbox_dir(1) * new_bbox_dir(1));
+  double dot_val_01 = fabs(old_bbox_dir(0) * new_bbox_dir(1) - old_bbox_dir(1) * new_bbox_dir(0));
+  bool bbox_dir_close = dot_val_00 > dot_val_01;
+
+  if (bbox_dir_close) {
+    float diff_1 = fabs(old_bbox_size(0) - new_bbox_size(0)) / std::max(old_bbox_size(0), new_bbox_size(0));
+    float diff_2 = fabs(old_bbox_size(1) - new_bbox_size(1)) / std::max(old_bbox_size(1), new_bbox_size(1));
+    size_distance = std::min(diff_1, diff_2);
+  } else {
+    float diff_1 = fabs(old_bbox_size(0) - new_bbox_size(1)) / std::max(old_bbox_size(0), new_bbox_size(1));
+    float diff_2 = fabs(old_bbox_size(1) - new_bbox_size(0)) / std::max(old_bbox_size(1), new_bbox_size(0));
+    size_distance = std::min(diff_1, diff_2);
+  }
+  return size_distance;
+}
+```
+
+这两个量有什么意义？这里简单解释一下，从计算方式可以看到：
+其实`dot_val_00`是两个坐标的点积，数学计算形式上是方向1投影到方向2向量上得到向量3，最后向量3模乘以方向2模长，这么做可以估算方向差异。因为，当方向1和方向2两个向量夹角靠近0或180度时，投影向量很长，`dot_val_00`这个点积的值会很大。**`dot_val_00`越大说明两个方向越接近。**
+同理`dot_val_01`上文我们提到过，差积的模可以衡量两个向量组成的四边形面积大小，这么做也可以估算方向差异。因为，当方向1和方向2两个向量夹角靠近90度时，组成的四边形面积最大，`dot_val_01`这个差积的模会很大。**`dot_val_00`越大说明两个方向越背离。**
+
+- 点云数量差异评分point_num_distance计算
+$point_num_distance = |n1-n2|/max(n1,n2)$
+
+- 外观特征差异评分histogram_distance计算
+$histogram_distance = \sum_{m=0}^{30} |sf1[m]-sf2[m]|$
