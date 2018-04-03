@@ -2073,25 +2073,32 @@ float TrackObjectDistance::ComputeDistance(const ObjectTrackPtr& track,
 ```
 
 各个子项的计算方式，这里以文字形式描述，假设：
+
 Object重心坐标为(x1,y1,z1)，方向为(dx1,dy1,dz1)，bbox尺寸为(l1,w1,h1), shape featrue为30维向量sf1，包含原始点云数量n1
+
 TrackedObject重心坐标为(x2,y2,z2)，方向为(dx2,dy2,dz2)，bbox尺寸为(l2,w2,h2), shape featrue为30维向量sf2，包含原始点云数量n2
 
 则有：
 
 - 重心位置坐标距离差异评分location_distance计算
+
 $location_distance = \sqrt{{x1 - x2}^2 + {y1 - y2}^2}$ 
+
 如果速度太大，则需要用方向向量去正则惩罚，具体可以参考代码
 
 
 - 物体方向差异评分direction_distance计算
+
 方向差异其实就是计算两个向量的夹角:
+
 $cos\theta = a·b/(|a|·|b|)$
-夹角越大，差异越大，cos值越小
-夹角越大，差异越大，cos值越大
+
+夹角越大，差异越大，cos值越小；夹角越大，差异越大，cos值越大
 
 最后使用1-cos计算评分，差异越小，评分越大。
 
 - 标定框尺寸差异评分bbox_size_distance计算
+
 代码中首先计算两个量`dot_val_00`和`dot_val_01`：
 
 ```c++
@@ -2115,11 +2122,15 @@ float TrackObjectDistance::ComputeBboxSizeDistance(const ObjectTrackPtr& track, 
 ```
 
 这两个量有什么意义？这里简单解释一下，从计算方式可以看到：
+
 其实`dot_val_00`是两个坐标的点积，数学计算形式上是方向1投影到方向2向量上得到向量3，最后向量3模乘以方向2模长，这么做可以估算方向差异。因为，当方向1和方向2两个向量夹角靠近0或180度时，投影向量很长，`dot_val_00`这个点积的值会很大。**`dot_val_00`越大说明两个方向越接近。**
+
 同理`dot_val_01`上文我们提到过，差积的模可以衡量两个向量组成的四边形面积大小，这么做也可以估算方向差异。因为，当方向1和方向2两个向量夹角靠近90度时，组成的四边形面积最大，`dot_val_01`这个差积的模会很大。**`dot_val_00`越大说明两个方向越背离。**
 
 - 点云数量差异评分point_num_distance计算
+
 $point_num_distance = |n1-n2|/max(n1,n2)$
 
 - 外观特征差异评分histogram_distance计算
+
 $histogram_distance = \sum_{m=0}^{30} |sf1[m]-sf2[m]|$
