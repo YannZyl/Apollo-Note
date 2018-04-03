@@ -1979,7 +1979,7 @@ void KalmanFilter::Propagate(const double& time_diff) {
 
 **从上面两个函数可以明显看到这个阶段就是卡尔曼滤波器的Predict阶段。同时可以看到**：
 
-1. `track_predict/predicted_state`相当于卡尔曼滤波其中的$X_{t,t-1}$, `belief_anchor_point_`和`belief_velocity_`相当于$X_t$, `ity_covariance_`同时存储$P_t$和$P_{t,t-1}$(Why?可以从上面的卡尔曼滤波器公式看到$P_t$在估测完$P_{t,t-1}$以后就没用了，所以可以覆盖存储，节省部分空间)
+1. `track_predict/predicted_state`相当于卡尔曼滤波其中的$X_{t,t-1}$, `belief_anchor_point_`和`belief_velocity_`相当于$X_t$, `ity_covariance_`交替存储$P_t$和$P_{t,t-1}$(Why?可以从上面的卡尔曼滤波器公式看到$P_t$在估测完$P_{t,t-1}$以后就没用了，所以可以覆盖存储，节省部分空间)
 
 2. 状态方程和观测方程其实本质上是一样，也就是相同维度的。都是6维，分别表示重心的xyz坐标和重心xyz的速度。同时在这个应用中，短时间间隔内。当前时刻重心位置=上时刻重心位置 + 上时刻速度\*时间差，所以可知卡尔曼滤波器中$A_{t,t-1}\equiv1$, $Q = I\*ts^2$
 
@@ -2082,7 +2082,7 @@ TrackedObject重心坐标为(x2,y2,z2)，方向为(dx2,dy2,dz2)，bbox尺寸为(
 
 - 重心位置坐标距离差异评分location_distance计算
 
-$location_distance = \sqrt{{(x1 - x2)}^2 + {(y1 - y2)}^2}$ 
+$location-distance = \sqrt{{(x1 - x2)}^2 + {(y1 - y2)}^2}$ 
 
 如果速度太大，则需要用方向向量去正则惩罚，具体可以参考代码
 
@@ -2129,8 +2129,283 @@ float TrackObjectDistance::ComputeBboxSizeDistance(const ObjectTrackPtr& track, 
 
 - 点云数量差异评分point_num_distance计算
 
-$point_num_distance = |n1-n2|/max(n1,n2)$
+$point-num_distance = |n1-n2|/max(n1,n2)$
 
 - 外观特征差异评分histogram_distance计算
 
-$histogram_distance = \sum_{m=0}^{30} |sf1[m]-sf2[m]|$
+$histogram-distance = \sum_{m=0}^{30} |sf1[m]-sf2[m]|$
+
+
+2. 子图划分
+
+子图划分首先根据上步骤计算的`association_mat`矩阵，利用超参数`s_match_distance_maximum_=4`，关联值小于阈值的判定为连接，否则不连接。最终得到的连接矩阵大小为(N+M)x(N+M)
+
+```c++
+void HungarianMatcher::ComputeConnectedComponents(
+    const Eigen::MatrixXf& association_mat, const float& connected_threshold,
+    std::vector<std::vector<int>>* track_components,
+    std::vector<std::vector<int>>* object_components) {
+  // Compute connected components within given threshold
+  int no_track = association_mat.rows();
+  int no_object = association_mat.cols();
+  std::vector<std::vector<int>> nb_graph;
+  nb_graph.resize(no_track + no_object);
+  for (int i = 0; i < no_track; i++) {
+    for (int j = 0; j < no_object; j++) {
+      if (association_mat(i, j) <= connected_threshold) {
+        nb_graph[i].push_back(no_track + j);
+        nb_graph[j + no_track].push_back(i);
+      }
+    }
+  }
+
+  std::vector<std::vector<int>> components;
+  ConnectedComponentAnalysis(nb_graph, &components);  // sub_graph segment
+  ...
+}
+```
+
+主要的子图划分工作在`ConnectedComponentAnalysis`函数完成，具体的可以参考代码，相对来说比较简单。最后得到的`components`二维向量中，每一行为一个子图的组成元素。
+
+3. 匈牙利算法对每个子图匹配
+
+匹配的算法主要还是匈牙利算法的矩阵形式，跟wiki百科的基本描述一致，可以参考主页[匈牙利算法](https://en.wikipedia.org/wiki/Hungarian_algorithm)
+
+
+#### 2.4.4 卡尔曼滤波，更新跟踪物体位置与速度信息(卡尔曼滤波阶段2：Update阶段)
+
+这个阶段做的工作比较重要，对上述Hungarian Matcher得到的<OldTrackedObject, NewTrackedObject>追踪对。
+
+- 计算真实的观测变量，包括真实观测到的车速度与加速度${Zv_t}$、$Za_t$
+- 由上时刻最优速度与加速度$Xv_{t-1}$、$Xa_{t-1}$ 估测当前时刻的速度与加速度$Xv_{t,t-1}$、$Xa_{t,t-1}$
+- 由估测速度与加速度$Xv_{t,t-1}$、$Xa_{t,t-1}$，更新得到t时刻最优速度与加速度${Xv_t}$、$Xa_t$
+
+另外这里还要一个说明，ObjectTrack类不仅封装了TrackedObject类，同时也封装了KalmanFilter类，KalmanFilter自己保存了上时刻最优状态，上时刻最优协方差矩阵，当前时刻最优状态等信息。TrackedObject、ObjectTrack里面也有这些状态。
+
+**注意：KalmanFilter里面是滤波后的原始数据(没有实际应用的限制条件加入)；TrackedObject和ObjectTrack类同样保存了一份状态信息，这些状态信息是从KalmanFilter中得到的原始信息，并且加入实际应用限制滤波以后的状态信息；ObjectTrack类里面的状态是需要依赖TrackedObject类的，所以务必先更新TrackedObject再更新ObjectTrack的状态。总之三者状态更新顺序为：`KalmanFilter -> TrackedObject -> ObjectTrack`**
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/hm_tracker.cc
+bool HmObjectTracker::Track(const std::vector<ObjectPtr>& objects,
+                            double timestamp, const TrackerOptions& options,
+                            std::vector<ObjectPtr>* tracked_objects) {
+   // E. update tracks
+  // E.1 update tracks with associated objects
+  UpdateAssignedTracks(&tracks_predict, &transformed_objects, assignments, time_diff);
+  // E.2 update tracks without associated objects
+  UpdateUnassignedTracks(tracks_predict, unassigned_tracks, time_diff);
+  DeleteLostTracks();
+  // E.3 create new tracks for objects without associated tracks
+  CreateNewTracks(transformed_objects, unassigned_objects);
+  // F. collect tracked results
+  CollectTrackedResults(tracked_objects);
+  return true;
+}
+
+void HmObjectTracker::UpdateAssignedTracks(
+    std::vector<Eigen::VectorXf>* tracks_predict,
+    std::vector<TrackedObjectPtr>* new_objects,
+    const std::vector<TrackObjectPair>& assignments, const double& time_diff) {
+  // Update assigned tracks
+  std::vector<ObjectTrackPtr>& tracks = object_tracks_.GetTracks();
+  for (size_t i = 0; i < assignments.size(); i++) {
+    int track_id = assignments[i].first;
+    int obj_id = assignments[i].second;
+    tracks[track_id]->UpdateWithObject(&(*new_objects)[obj_id], time_diff);
+  }
+}
+```
+
+从上述的代码可以看到，更新过程有`ObjectTrack::UpdateWithObject`和`ObjectTrack::UpdateWithoutObject`两个函数完成，这两个函数间接调用kalman滤波器完成滤波更新，接下去我们简单地分析`ObjectTrack::UpdateWithObject`函数的流程。
+
+```c++
+/// file in apollo/modules/perception/obstacle/lidar/tracker/hm_tracker/object_track.cc 
+void ObjectTrack::UpdateWithObject(TrackedObjectPtr* new_object, const double& time_diff) {
+
+  // A. update object track
+  // A.1 update filter
+  filter_->UpdateWithObject((*new_object), current_object_, time_diff);
+  filter_->GetState(&belief_anchor_point_, &belief_velocity_);
+  filter_->GetOnlineCovariance(&belief_velocity_uncertainty_);
+
+  (*new_object)->anchor_point = belief_anchor_point_;
+  (*new_object)->velocity = belief_velocity_;
+  (*new_object)->velocity_uncertainty = belief_velocity_uncertainty_;
+
+  belief_velocity_accelaration_ = ((*new_object)->velocity - current_object_->velocity) / time_diff;
+  // A.2 update track info
+  ...
+
+  // B. smooth object track
+  // B.1 smooth velocity
+  SmoothTrackVelocity((*new_object), time_diff);
+  // B.2 smooth orientation
+  SmoothTrackOrientation();
+}
+```
+
+从代码中可以看出每个TrackedObject的跟踪主要分两个过程：卡尔曼滤波器跟新状态，以及平滑滤波。
+
+1. 滤波器状态更新
+
+主要由`KalmanFilter::UpdateWithObject`函数完成，计算过成分下面几步：
+
+- Step1. 计算更新评分 `ComputeUpdateQuality(new_object, old_object)`
+
+这个过程主要是计算更新力度，因为每个Object和对应的跟踪目标TrackedObject之间有一个关联系数`association_score`，这个系数衡量两个目标之间的相似度，所以这里需要增加对目标的更新力度参数。
+
+计算关联力度: `update_quality_according_association_score = 1 - association_score / s_association_score_maximum_`。默认s_association_score_maximum_= 1，关联越大(相似度越大)，更新力度越大
+
+计算点云变化力度: `update_quality_according_point_num_change  = 1 - |n1 - n2| / max(n1, n2)`。点云变化越小，更新力度越大
+
+最终取两个值的较小值最为最终的更新力度。
+
+- Step2. 计算当前时刻的速度`measured_velocity`和和加速度`measured_acceleration `(这两个变量相当于卡尔曼滤波中的观测变量$Z_t$)
+
+首先计算重心速度: `measured_anchor_point_velocity = [NewObject_barycenter(x,y,z) - OldObject_barycenter(x,y,z)] / timediff`。timediff是两次计算的时间差，很简单地计算方式
+
+其次计算标定框(中心)速度：`measured_bbox_center_velocity  = [NewObject_center(x,y,z) - OldObject_center(x,y,z)] / timediff`。这里的中心区别于上面的重心，重心是所有点云的平均值；重心是MinBox的中心值。还有一个需要注意的是，如果求出来的中心速度方向和重心方向相反，这时候有干扰，中心速度暂时置为0。
+
+然后计算标定框角点速度:
+
+A. 根据NewObject的点云计算bbox(这不是MinBox)，并求出中心center，然后根据反向求出4个点。如果NewObject方向是dir，那么首先对dir进行归一化得到dir_normal=dir/|dir|^2=(nx,ny,0)，然后求他的正交方向dir_ortho=(-ny,nx,0)，如果中心点坐标center，那么左上角的坐标就是: center+dir\*size[0]\*0.5+ortho_dir\*size[1]\*0.5。根据这个公式可以计算出其他三个点的坐标。
+
+B. 计算标定框bbox四个角点的速度: `bbox_corner_velocity = ((new_bbox_corner - old_bbox_corner) / time_diff)`公式与上面的重心、中心计算方式一样。
+
+C. 计算4个角点的在主方向上的速度，去最小的点最为标定框角点速度。只需要将B中的`bbox_corner_velocity`投影到主方向即可。
+
+最后在重心速度、重心速度、bbox角速度中选择速度增益最小的最后最终物体的增益。增益=当前速度-上时刻最优速度
+
+加速度`measured_acceleration `计算比较简单，采用最近3次的速度(v1,t1),(v2,t2),(v3,t3)，然后加速度a=(v3-v1)/(t2+t3)。注意(v2,t2)意思是某一时刻最优估计速度为v2，且距离上次的时间差为t2，所以三次测量的时间差为t2+t3。速冻变化为v3-v1。
+
+- Step3. 估算最优的速度与加速度(卡尔曼滤波Update步骤)
+
+首先，计算卡尔曼增益$H_t = P_{t,t-1}{C_t}^T[C_tP_{t,t-1}{C_t}^T + R]^{-1}$，在apollo代码中计算代码如下：
+
+```c++
+// Compute kalman gain
+Eigen::Matrix3d mat_c = Eigen::Matrix3d::Identity();                                 // C_t
+Eigen::Matrix3d mat_q = s_measurement_noise_ * Eigen::Matrix3d::Identity();          // R_t
+Eigen::Matrix3d mat_k = velocity_covariance_ * mat_c.transpose() *                   // H_t
+      (mat_c * velocity_covariance_ * mat_c.transpose() + mat_q).inverse();
+```
+
+从上面可知，代码和我们给出的结果是一致的。
+
+然后，由当前时刻的估算速度$X_{t,t-1}$、观测变量$Z_t$以及卡尔曼增益$H_t$，得到当前时刻的最优速度估计$X_t = X_{t,t-1} + H_t[Z_t - C_tX_{t,t-1}]$，在apollo代码中计算了速度增益，也就是$X_t-X_{t,t-1}$：
+
+```c++
+// Compute posterior belief
+Eigen::Vector3d measured_velocity_d = measured_velocity.cast<double>();                      // Zv_t
+Eigen::Vector3d priori_velocity = belief_velocity_ + belief_acceleration_gain_ * time_diff;  // Xv_{t,t-1}
+Eigen::Vector3d velocity_gain = mat_k * (measured_velocity_d - mat_c * priori_velocity);     // Gain = Xv_t - Xv_{t,t-1}
+```
+
+然后对速度增益进行平滑并且保存当前t时刻最优速度以及最优加速度
+
+```c++
+// Breakdown
+ComputeBreakdownThreshold();
+if (velocity_gain.norm() > breakdown_threshold_) {
+  velocity_gain.normalize();
+  velocity_gain *= breakdown_threshold_;
+}
+
+belief_anchor_point_ = measured_anchor_point_d;
+belief_velocity_ = priori_velocity + velocity_gain;          // Xv_t = Xv_{t,t-1} + Gain
+belief_acceleration_gain_ = velocity_gain / time_diff;       // Acc_t = Xv_t / timediff
+```
+
+最后就是速度整流并且修正估计协方差矩阵$P_{t,t-1}$，得到当前时刻最优协方差矩阵$P_t=[I-H_tC_t]P_{t,t-1}$，在这个应用中$C_t\equiv1$
+
+```c++
+// Adaptive
+if (s_use_adaptive_) {
+  belief_velocity_ -= belief_acceleration_gain_ * time_diff;
+  belief_acceleration_gain_ *= update_quality_;
+  belief_velocity_ += belief_acceleration_gain_ * time_diff;
+}
+
+// Compute posterior covariance
+velocity_covariance_ = (Eigen::Matrix3d::Identity() - mat_k * mat_c) * velocity_covariance_;   // P_t
+
+```
+
+加速度更新与上述速度更新方法一致。
+
+- Step4. 缓存更新信息
+
+将观测变量`measured_velocity`和时间差`time_diff`缓存，同时使用观测速度`measured_velocity`对实时协方差矩阵`online_velocity_covariance_ `进行更新
+
+
+2. TrackedObject状态更新
+
+设置TrackedObject的重心，速度(滤波器得到的t时刻最优速度`belief_velocity_`)，加速度([最优速度`belief_velocity_` - OldObject的最优速度]/时间差)
+
+更新跟踪时长(++age)，目标可见次数(++total_visible_count_)，跟踪总时长(period_ += time_diff)，连续不可见时长置0(consecutive_invisible_count_=0)
+
+
+3. 速度与方向平滑滤波
+
+由原始KalmanFilter中的各个状态信息，加入实际应用中的限制进行滤波得到ObjectTrack的状态信息，这些信息才是真实被使用的。
+
+对跟踪物体的速度整流过程如下(`ObjectTrack::SmoothTrackVelocity`)：
+
+- 如果物体的加速度增益查过一定阈值(s_acceleration_noise_maximum_, 默认为5)，那么当前速度保持上时刻的速度。
+- 否则，对小速度物体进行修建。计算物体的速度，默认`s_speed_noise_maximum_ = 0.4`
+	- 如果`velocity_is_noise = speed < (s_speed_noise_maximum_ / 2)` ,则判定为噪声
+	- 如果`velocity_is_small = speed < (s_speed_noise_maximum_ / 1)`，则判定为小速度
+	- 计算物体两个时刻角度的变化，`fabs(velocity_angle_change) > M_PI / 4.0`，如果cos值小于pi/4(45度)，说明物体没有角度变化
+	最终判断：if(velocity_is_noise || (velocity_is_small && is_velocity_angle_change)) 如果速度是噪声，或者速度很小方向不变，那么认定车是静止的。
+	对于车是静止的，真实速度和加速度都设置为0.
+
+这里需要注意：
+
+>  // NEED TO NOTICE: claping small velocity may not reasonable when the true
+>  // velocity of target object is really small. e.g. a moving out vehicle in
+>  // a parking lot. Thus, instead of clapping all the small velocity, we clap
+>  // those whose history trajectory or performance is close to a static one.
+
+按照官方代码提醒，其实这样对小速度物体进行修剪时不太合理，因为某些情况下物体速度确实很小，但是他确实是在运动。E.g. 汽车倒车的时候，速度小，但是不能被忽略。所以最好的方法是根据历史的轨迹(重心，anchor_point)来判断物体在小速度的情况下是否是运动的。
+
+对跟踪物体的方向整流过程如下(`ObjectTrack::SmoothTrackOrientation`)：
+
+- 如果物体运动比较明显`velocity_is_obvious = current_speed > (s_speed_noise_maximum_ * 2)`(大于0.4m/s)，那么当前运动方向为物体速度的方向；否则设定为车道线方向。
+
+就这样，经过三步骤，跟踪配对的物体(Object-TrackedObject存在)完成了状态信息的更新，主要包括当前时刻最优速度、方向、加速等信息。
+
+---------------------------------------------------------------------------
+
+如果跟踪物体中没有找到对应的Object与之匹配，就需要使用`UpdateUnassignedTracks`函数来更新跟踪物体的信息。从上面我们可以看到，匹配成功的可以用Object的属性来计算观测变量，间接估算出t时刻的最优状态。 但是未匹配的TrackedObject无法因为找不到Object，所以无法了解当前时刻真实能测量到的位置、速度与加速度信息，因此只能依赖自身上时刻的最优状态来推算出当前时候的状态信息(注意，这个推算出来的不是最优状态)。
+
+对未找到Object的跟踪物体，更新过程如下：
+
+1. 使用2.4.2节中的估算数据来预测当前时刻的状态
+
+```c++
+Eigen::Vector3f predicted_shift = predict_state.tail(3) * time_diff;
+new_obj->anchor_point = current_object_->anchor_point + predicted_shift;
+new_obj->barycenter = current_object_->barycenter + predicted_shift;
+new_obj->center = current_object_->center + predicted_shift;
+```
+
+其中`predicted_shift`是利用卡尔曼滤波Predict阶段预测到的当前时刻物体重心位置与速度状态$Xp_{t,t-1}$和$Xv_{t,t-1}$，乘以时间差就可以得到这个时间差内的位移，去更新中心，重心。
+
+2. 上时刻TrackedObject里面的原始点云和多边形坐标也加上这个位移，完成更新。
+
+3. 更新KalmanFilter里面的原始状态信息，`KalmanFilter::UpdateWithoutObject`，KalmanFilter只更新重心坐标，不需要更新速度和加速度(因为无法更新，缺少观测数据Z，不能使用卡尔曼滤波器的Update过程去更新)。
+
+4. 更新TrackedObject状态信息，更新跟踪时长(++age)，跟踪总时长(period_ += time_diff)，更新连续不可见时长置(++consecutive_invisible_count_=0)
+
+5. 更新历史缓存
+
+---------------------------------------------------------------------------------
+
+更新完匹配成功和不成功的跟踪物体以后，下一步就是从跟踪列表中删掉丢失的跟踪物体。遍历整个跟踪列表：
+
+1. 可见次数/跟踪时长小于阈值(s_track_visible_ratio_minimum_，默认0.6)，删除
+2. 连续不可见次数大于阈值(s_track_consecutive_invisible_maximum_，默认1)，删除
+
+---------------------------------------------------------------------------------
+
+如果Object没有找到对应的TrackedObject与之匹配，那么就创建新的跟踪目标，并且加入跟踪队列。
