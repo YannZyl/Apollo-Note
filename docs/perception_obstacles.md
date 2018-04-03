@@ -2244,9 +2244,9 @@ void ObjectTrack::UpdateWithObject(TrackedObjectPtr* new_object, const double& t
 }
 ```
 
-从代码中可以看出每个TrackedObject的跟踪主要分两个过程：卡尔曼滤波器跟新状态，以及平滑滤波。
+从代码中也可以间接看出更新的过程A.1和A.2是更新KalmanFilter和TrackedObject状态信息，B是更新ObjectTrack状态，这里必须按顺序来更新！
 
-1. 滤波器状态更新
+1. KalmanFilter滤波器状态更新
 
 主要由`KalmanFilter::UpdateWithObject`函数完成，计算过成分下面几步：
 
@@ -2345,7 +2345,7 @@ velocity_covariance_ = (Eigen::Matrix3d::Identity() - mat_k * mat_c) * velocity_
 更新跟踪时长(++age)，目标可见次数(++total_visible_count_)，跟踪总时长(period_ += time_diff)，连续不可见时长置0(consecutive_invisible_count_=0)
 
 
-3. 速度与方向平滑滤波
+3. ObjectTrack状态更新(速度与方向平滑滤波)
 
 由原始KalmanFilter中的各个状态信息，加入实际应用中的限制进行滤波得到ObjectTrack的状态信息，这些信息才是真实被使用的。
 
@@ -2399,7 +2399,6 @@ new_obj->center = current_object_->center + predicted_shift;
 
 5. 更新历史缓存
 
----------------------------------------------------------------------------------
 
 更新完匹配成功和不成功的跟踪物体以后，下一步就是从跟踪列表中删掉丢失的跟踪物体。遍历整个跟踪列表：
 
@@ -2409,3 +2408,25 @@ new_obj->center = current_object_->center + predicted_shift;
 ---------------------------------------------------------------------------------
 
 如果Object没有找到对应的TrackedObject与之匹配，那么就创建新的跟踪目标，并且加入跟踪队列。
+
+
+最终对HM物体跟踪做一个总结与梳理，物体跟踪主要是对上述CNN分割与MinBox边框构建产生的Object对一个跟踪与匹配，主要流程是：
+
+- Step1，预处理，Object里面的中心，重心，点云，多边形凸包从lidar坐标系转换成局部ENU坐标系。
+- Step2. 将坐标转换完成Object封装成TrackedObject，方便后续加入跟踪列表
+- Step3. 使用卡尔曼滤波Predict阶段，对正处于跟踪列表中的跟踪物体进行当前时刻重心位置、速度的预测
+- Step4. 使用当前检测到的Object(封装成了TrackedObject)，去和跟踪列表中的物体进行匹配
+	- 计算Object与TrackedObject的关联矩阵
+		- 重心位置坐标距离差异评分
+		- 物体方向差异评分
+		- 标定框尺寸差异评分
+		- 点云数量差异评分
+		- 外观特征差异评分
+	- 根据关联矩阵，配合阈值，划分子图
+	- 对于每个子图使用匈牙利匹配算法(Hungarian Match)进行匹配，得到<Object,TrackedObject>、<Object,None>, <None,TrackedObject>
+		- <Object,TrackedObject>成功匹配(有Object计算观测数据)，更新KalmanFilter状态(Update阶段), 更新TrackedObject状态，更新ObjectTrack状态
+		- <None,TrackedObject>没有对应的Object(无法得到观测数据，无法使用卡尔曼滤波估算最优速度)，更新部分KalmanFilter状态(仅重心)，跟新TrackedObject状态，更新ObjectTrack状态
+		- <Object,None>创建新的TrackedObject，加入跟踪列表
+	- 删除丢失的跟踪目标
+		- 可见次数/跟踪时长过小
+		- 连续不可见次数过大
