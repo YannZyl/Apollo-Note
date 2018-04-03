@@ -2174,7 +2174,7 @@ void HungarianMatcher::ComputeConnectedComponents(
 
 #### 2.4.4 卡尔曼滤波，更新跟踪物体位置与速度信息(卡尔曼滤波阶段2：Update阶段)
 
-这个阶段做的工作比较重要，对上述Hungarian Matcher得到的<OldTrackedObject, NewTrackedObject>追踪对。
+这个阶段做的工作比较重要，对上述Hungarian Matcher得到的<OldTrackedObject, NewObject>追踪对。
 
 - 计算真实的观测变量，包括真实观测到的车速度与加速度${Zv_t}$、$Za_t$
 - 由上时刻最优速度与加速度$Xv_{t-1}$、$Xa_{t-1}$ 估测当前时刻的速度与加速度$Xv_{t,t-1}$、$Xa_{t,t-1}$
@@ -2361,16 +2361,14 @@ velocity_covariance_ = (Eigen::Matrix3d::Identity() - mat_k * mat_c) * velocity_
 
 这里需要注意：
 
->  // NEED TO NOTICE: claping small velocity may not reasonable when the true
->  // velocity of target object is really small. e.g. a moving out vehicle in
->  // a parking lot. Thus, instead of clapping all the small velocity, we clap
->  // those whose history trajectory or performance is close to a static one.
+>// NEED TO NOTICE: claping small velocity may not reasonable when the true
+> velocity of target object is really small. e.g. a moving out vehicle in
+> a parking lot. Thus, instead of clapping all the small velocity, we clap
+> those whose history trajectory or performance is close to a static one.
 
 按照官方代码提醒，其实这样对小速度物体进行修剪时不太合理，因为某些情况下物体速度确实很小，但是他确实是在运动。E.g. 汽车倒车的时候，速度小，但是不能被忽略。所以最好的方法是根据历史的轨迹(重心，anchor_point)来判断物体在小速度的情况下是否是运动的。
 
-对跟踪物体的方向整流过程如下(`ObjectTrack::SmoothTrackOrientation`)：
-
-- 如果物体运动比较明显`velocity_is_obvious = current_speed > (s_speed_noise_maximum_ * 2)`(大于0.4m/s)，那么当前运动方向为物体速度的方向；否则设定为车道线方向。
+对跟踪物体的方向整流过程如下(`ObjectTrack::SmoothTrackOrientation`)，如果物体运动比较明显`velocity_is_obvious = current_speed > (s_speed_noise_maximum_ * 2)`(大于0.4m/s)，那么当前运动方向为物体速度的方向；否则设定为车道线方向。
 
 就这样，经过三步骤，跟踪配对的物体(Object-TrackedObject存在)完成了状态信息的更新，主要包括当前时刻最优速度、方向、加速等信息。
 
