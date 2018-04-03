@@ -2082,7 +2082,7 @@ TrackedObject重心坐标为(x2,y2,z2)，方向为(dx2,dy2,dz2)，bbox尺寸为(
 
 - 重心位置坐标距离差异评分location_distance计算
 
-$location_distance = \sqrt{{x1 - x2}^2 + {y1 - y2}^2}$ 
+$location_distance = \sqrt{{(x1 - x2)}^2 + {(y1 - y2)}^2}$ 
 
 如果速度太大，则需要用方向向量去正则惩罚，具体可以参考代码
 
