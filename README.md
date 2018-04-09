@@ -13,12 +13,12 @@
 	- [高精地图模块: HD-Map](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#高精地图模块)
 	- [定位模块: Localization](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#定位模块)
 - 感知模块笔记
-	- 代码层次结构
-		- Topic注册管理器初始化
-		- ShareData共享数据类初始化
-		- SubNode子节点类初始化
-		- DAG有向图初始化
-		- DAG整体运行实现感知
+	- [代码层次结构](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md)
+		- [Topic注册管理器初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#注册管理器初始化)
+		- [ShareData共享数据类初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#共享数据类初始化)
+		- [SubNode子节点类初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#子节点类初始化)
+		- [DAG有向图初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#有向图初始化)
+		- [DAG整体运行实现感知](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#DAG运行)
 	- 激光雷达障碍物感知: LiDAR Obstacle Perception
 	- 雷达障碍物感知: RADAR Obstacle Perception
 	- 障碍物结果融合: Result Fusion
