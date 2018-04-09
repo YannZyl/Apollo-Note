@@ -2,16 +2,16 @@
 
 本文档主要介绍Apollo 2.0软件平台，其中各个模块结构与功能的纤细介绍。文档的目录结构为：
 
-- Apollo 2.0 软件结构简介
-	- 软件结构图
-	- 感知模块: Perception
-	- 预测模块: Prediction
-	- 路由模块: Routing
-	- 规划模块: Planning
-	- 控制模块: Control
-	- 控制区域网络模块: CanBus
-	- 高精地图模块: HD-Map
-	- 定位模块: Localization
+- [Apollo 2.0 软件结构简介](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md)
+	- [软件结构图](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#软件结构图)
+	- [感知模块: Perception](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#感知模块)
+	- [预测模块: Prediction](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#预测模块)
+	- [路由模块: Routing](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#路由模块)
+	- [规划模块: Planning](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#规划模块)
+	- [控制模块: Control](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#控制模块)
+	- [控制区域网络模块: CanBus](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#控制区域网络模块)
+	- [高精地图模块: HD-Map](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#高精地图模块)
+	- [定位模块: Localization](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#定位模块)
 - 感知模块笔记
 	- 代码层次结构
 		- Topic注册管理器初始化
@@ -19,13 +19,11 @@
 		- SubNode子节点类初始化
 		- DAG有向图初始化
 		- DAG整体运行实现感知
-	- 障碍物感知: 3D Obstacles Perception
-		- 激光测距仪障碍物感知: LiDAR Obstacle Perception
-		- 雷达障碍物感知: RADAR Obstacle Perception
-		- 障碍物结果融合: Result Fusion
-	- 信号灯感知: Traffic Light Perception
-		- 信号灯预处理: Traffic Light Preprocess
-		- 信号灯处理: Traffic Light Process
+	- 激光雷达障碍物感知: LiDAR Obstacle Perception
+	- 雷达障碍物感知: RADAR Obstacle Perception
+	- 障碍物结果融合: Result Fusion
+	- 信号灯预处理: Traffic Light Preprocess
+	- 信号灯处理: Traffic Light Process
 
 Links:
 
