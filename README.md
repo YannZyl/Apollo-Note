@@ -12,14 +12,18 @@
 	- [控制区域网络模块: CanBus](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#控制区域网络模块)
 	- [高精地图模块: HD-Map](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#高精地图模块)
 	- [定位模块: Localization](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#定位模块)
-- 感知模块笔记
+- [感知模块笔记](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_arch.md)
 	- [代码层次结构](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md)
 		- [Topic注册管理器初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#注册管理器初始化)
 		- [ShareData共享数据类初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#共享数据类初始化)
 		- [SubNode子节点类初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#子节点类初始化)
 		- [DAG有向图初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#有向图初始化)
 		- [DAG整体运行实现感知](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#DAG运行)
-	- 激光雷达障碍物感知: LiDAR Obstacle Perception
+	- [激光雷达障碍物感知: LiDAR Obstacle Perception](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_arch.md)
+		- 高精地图ROI过滤器
+		- 基于卷积神经网络分割
+		- MinBox障碍物边框构建
+		- HM对象跟踪
 	- 雷达障碍物感知: RADAR Obstacle Perception
 	- 障碍物结果融合: Result Fusion
 	- 信号灯预处理: Traffic Light Preprocess
