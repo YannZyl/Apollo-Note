@@ -263,9 +263,9 @@ bool TLProcSubnode::ProcEvent(const Event &event) {
   ...
   // recognize_status
   ...
-  // using rectifier to rectify the region.
-  if (!rectifier_->Rectify(*(image_lights->image), rectify_option, (image_lights->lights).get())) {
-    return false;
+  // revise status
+  if (!reviser_->Revise(ReviseOption(event.timestamp),image_lights->lights.get())) {
+    ...
   }
 }
 
@@ -309,3 +309,57 @@ bool ColorReviser::Revise(const ReviseOption &option, std::vector<LightPtr> *lig
 - 如果检测到的是BLACK或者UNKNOWN，查询缓存，缓存中由上时刻该信号灯(id必须一致)信息，并且两个时间差小与一个阈值(由blink_time_控制，默认1.5s)，则使用缓存中的状态作为当前信号灯状态。
 - 如果检测到是YELLOW，查看缓存，如果缓存中上时刻状态是RED，那么刷新变成RED；否则保留YELLOW状态
 - 如果是RED或者GREEN，则刷新缓存，缓存中对应id的信号灯状态修改为当前状态。当然如果缓存时间过长，那么已经过掉路口了，对应的信号灯就没意义了，这时候可以清楚缓存，重新保存。
+
+## 信息发布
+
+当做完最终的校验以后就得到了信号灯的确定状态，最后一步需要将信号灯状态发布出去。
+
+```c++
+/// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
+bool TLProcSubnode::ProcEvent(const Event &event) {
+  // get data from sharedata which pulish by Preprocess SubNode
+  ...
+  // verify image_lights from cameras
+  ...
+  // using rectifier to rectify the region.
+  ...
+  // recognize_status
+  ...
+  // revise status
+  ...
+  PublishMessage(image_lights);
+}
+
+bool TLProcSubnode::PublishMessage(const std::shared_ptr<ImageLights> &image_lights) {
+ 
+  TrafficLightDetection result;
+  AdapterManager::FillTrafficLightDetectionHeader("traffic_light", &result);
+  // 1. set timestamp
+  auto *header = result.mutable_header();
+  uint64_t img_timestamp = static_cast<uint64_t>(image_lights->image->ts() * 1e9);  
+  header->set_camera_timestamp(img_timestamp);
+
+  // 2. add traffic light result
+  for (const auto &light : *lights) {
+    TrafficLight *light_result = result.add_traffic_light();
+    light_result->set_id(light->info.id().id());
+    light_result->set_confidence(light->status.confidence);
+    light_result->set_color(light->status.color);
+  }
+
+  // 3. set contain_lights
+  result.set_contain_lights(image_lights->num_signals > 0);
+
+  // add info to TrafficLightDebug
+  ...
+
+  AdapterManager::PublishTrafficLightDetection(result);
+  return true;
+}
+```
+
+从上面代码我们可以得到如下结论：
+
+1. Traffic Light Process子节点最终发布结果是以ROS消息订阅与发布机制完成的，`AdapterManager::PublishTrafficLightDetection`中注册了各类topic，其中包括TrafficLightDetection类型的topic。
+
+2. 发布的消息内容包含有：时间戳、信号灯id、信号灯状态置信度、信号灯颜色、是否包含信号灯等信息。

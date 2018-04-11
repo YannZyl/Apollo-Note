@@ -12,7 +12,7 @@
 
 Topic注册与管理器初始化主要是为Apollo各个模块之间节点通信创建所需要订阅与发布的topic。前提是节点使用的是ROS消息发布与订阅机制(下文将提到)，这些节点会接受各类数据，然后处理数据，最终将数据发布出去给需要用到的另一些节点。总而言之，这类节点有输入或者输出。节点输入意味着需要订阅某些topic，而节点输出代表节点需要发布某些topic，这样就可以完成节点之间的通信。
 
-```
+```c++
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
   AdapterManager::Init(FLAGS_perception_adapter_config_filename);
@@ -88,7 +88,7 @@ Apollo中所有的topic有：
 
 每个topic的注册管理器类创建使用REGISTER_ADAPTER(name)完成，具体的初始化工作则调用宏生成的Enable##name()。进一步具体观察REGISTER_ADAPTER宏部分关键代码:
 
-```
+```c++
 /// file in apollo/modules/common/adapters/adapter_manager.h
 #define REGISTER_ADAPTER(name)                                                 \
  public:                                                                       \
@@ -146,7 +146,7 @@ Apollo中所有的topic有：
 
 对比上述的ROS消息订阅与发布机制，另一类消息传递机制是依赖手工管理收发消息(下文将提到)。共享数据是针对这类机制设定的，某些节点需要的输入数据保存到共享信息中，节点需要自己调用函数去提取共享数据完成处理。共享数据类初始化主要是创建各个共享数据结构的模板类，在后续DAG初始化工程中调用这些类可以真正实例化共享数据类。
 
-```
+```c++
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
   ...
@@ -171,7 +171,7 @@ void Perception::RegistAllOnboardClass() {
 
 (1) 对应共享数据容器类注册，注册LidarObjectData
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/onboard/object_share_data.h
 #define OBJECT_SHARED_DATA(data_name)                        \
   class data_name : public CommonSharedData<SensorObjects> { \
@@ -214,7 +214,7 @@ OBJECT_SHARED_DATA(LidarObjectData);
 
 (2) 创建共享数据容器类实例与保存类函数，方便实例化LidarObjectData与保存
 
-```
+```c++
 /// file in apollo/modules/perception/obstacle/onboard/object_share_data.h
 #define OBJECT_SHARED_DATA(data_name)                        \
   class data_name : public CommonSharedData<SensorObjects> { \
@@ -257,7 +257,7 @@ BaseClassMap &GlobalFactoryMap();
 
 子节点SubNode类初始化与共享数据类初始化相同，主要是创建各个子节点的模板类，在后续DAG初始化工程中调用这些类可以真正实例化子节点类。
 
-```
+```c++
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
   ...
@@ -283,7 +283,7 @@ void Perception::RegistAllOnboardClass() {
 - TLProcessSubnode/信号灯处理子节点，用于信号灯感知/Traffic Light Perception
 
 以TLPreprocessSubnode注册初始化为例，子节点初始化
-```
+```c++
 /// file in apollo/modules/perception/onboard/tl_preprocessor_subnode.h
 class TLProcSubnode : public Subnode {
  public:
@@ -351,7 +351,7 @@ TLPreprocessorSubnode继承了Subnode类，可以进一步分析TLPreprocessorSu
 
 DAG初始化过程主要是构建子节点SubNode，边Edge和共享数据ShareData的一个有向图，并全部实例化得到对应的类对象，关于有向图的三部分内容，程序从config文件读入
 
-```
+```c++
 /// file in apollo/modules/perception/perception.cc
 Status Perception::Init() {
   ...
@@ -401,7 +401,7 @@ data_config {
 
 (1) 在DAG三部分初始化过程中，上小节"子节点SubNode类初始化"仅仅创建该类实例化的函数，5个子节点分别对应5个线程，每个线程设置对应的回调函数，当有输入的时候(收到ROS订阅的消息topic或者定时触发)，自动触发子节点功能，但未真正的实例化该类。在DAG有向图初始化中子节点的初始化工作包含SubNode配置记录(节点id，入度id，出度id)，子节点实例化，通过调用先前创建的函数可以实例化子节点，并保存在GlobalFactory[Subnode][TLPreprocessorSubnode]两级存储中。
 
-```
+```c++
 /// file in apollo/modules/perception/onboard/dag_streaming.cc
 bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
   const DAGConfig::SubnodeConfig& subnode_config = dag_config.subnode_config();
@@ -445,7 +445,7 @@ bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
 
 上述过程前两个for达到记录Edge配置作用，真正意义上的实例化工作由SubnodeRegisterer::GetInstanceByName和Init完成，该过程代码如下
 
-```
+```c++
 /// file in apollo/modules/perception/lib/base/registerer.h
 #define REGISTER_REGISTERER(base_class)                               \
   class base_class##Registerer {                                      \
@@ -461,7 +461,7 @@ bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
 
 (2) 在DAG初始化过程中，边Edge初始化需要依赖EvenManager完成，其实本质上Edge是数据的流动过程，也就是消息的订阅与发布过程，所以Apollo中使用EvenManager统一管理各个topic消息的订阅与发布
 
-```
+```c++
 /// file in apollo/modules/perception/onboard/dag_streaming.cc
 bool DAGStreaming::Init(const string& dag_config_path) {
   ...
@@ -508,7 +508,7 @@ private:
 
 (3) 最后的共享数据ShareData初始化依赖，共享数据的初始化与子节点初始化相似，主要是做数据的记录以及ShareData的实例化
 
-```
+```c++
 /// file in apollo/modules/perception/onboard/dag_streaming.cc
 bool DAGStreaming::Init(const string& dag_config_path) {
  ...
@@ -541,7 +541,7 @@ bool SharedDataManager::Init(const DAGConfig::SharedDataConfig &data_config) {
 
 上图展示了DAG运行的流程图，其中Run函数是线程指定的运行函数。
 
-```
+```c++
 /// file in apollo/modules/perception/lib/base/thread.h && thread.cc
 class Thread {
   void Thread::Start() {
@@ -570,7 +570,7 @@ class Thread {
 
 最末端DAGStreamingMonitor::Run()函数是DAG监视器线程，主要工作是检测拥塞情况(拥塞值大于实现设定的最大允许拥塞值时重置DAG)以及清除超时的共享数据的。
 
-```
+```c++
 /// file in apollo/modules/perception/onboard/dag_streaming.cc
 void DAGStreaming::Schedule() {
   monitor_->Start();
@@ -597,7 +597,7 @@ void DAGStreamingMonitor::Run() {
 
 第二部分是开启所有子节点SubNode的线程。具体每个SubNode的线程函数可以参考Subnode类
 
-```
+```c++
 /// file in apollo/modules/perception/onboard/dag_streaming.cc
 void DAGStreaming::Schedule() {
   ...
@@ -650,12 +650,301 @@ class TLPreprocessorSubnode : public Subnode {
 
 - 另一类消息接受与发布机制依赖于EvenManager来管理消息，就是采用ProEvents()处理，当节点线程循环执行Run函数去接受列表头的第一个消息，交由ProEvents()去处理消息，同时Run函数可以逐个发布发送队列中的消息。
 
-此外，总结一下5个子节点的消息发布类型：
+此外，总结一下5个子节点的消息接受发布方式：
 
-| 子节点名称 | 消息传递机制 |
+| 子节点名称 | 接收消息机制 | 发布消息机制 | 
 | ---------- | ------------------- |
-| LidarProcessSubnode | ROS发布与订阅机制 |
-| RadarProcessSubnode | ROS发布与订阅机制 |
+| LidarProcessSubnode | ROS消息订阅 |
+| RadarProcessSubnode | ROS消息订阅 |
 | FusionSubnode | 自定义ProcEvents消息处理机制，从LidarObjectData和RadarObjectData共享数据中手动提取数据 |
-| TLPreprocessorSubnode | ROS发布与订阅机制 |
-| TLProcSubnode | 自定义ProcEvents消息处理机制，从TLPreprocessingData共享数据中手动提取数据 |
+| TLPreprocessorSubnode | ROS消息订阅机制 | 自定义PtocEvents消息处理机制，处理结果保存至TLPreprocessingData共享数据类中 |
+| TLProcSubnode | 自定义ProcEvents消息处理机制，从TLPreprocessingData共享数据中手动提取数据 | ROS消息发布机制 |
+
+
+### <a name="消息发布与接收">节点消息发布与接收</a>
+
+最后一小节，我们系统的讲解一下Apollo中消息的交互机制，主要分两类：ROS消息订阅与发布机制、自定义共享信息机制。
+
+#### ROS消息订阅与发布机制
+
+该机制下，消息的管理与传输由ROS提供，只需要在系统中注册一个对应的topic，ROS机制相对比较简单。注册一个ROS消息订阅的子节点Subnode，主要做的工作包含以下：
+
+1. 首先定义一个ROS交互的数据类型，我们参考Traffic Light Process子节点，输出需要进行topic发布。发布消息的类型定义在：
+
+```proto
+/// file in apollo/modules/perception/proto/traffic_light_detection.proto
+
+syntax = "proto2";
+package apollo.perception;
+
+message TrafficLightBox{
+    ...
+}
+message TrafficLightDebug{
+    ...
+}
+message TrafficLight {
+    ...
+}
+message TrafficLightDetection {
+    optional apollo.common.Header header = 2;
+    repeated TrafficLight traffic_light = 1;
+    optional TrafficLightDebug traffic_light_debug = 3;
+    optional bool contain_lights = 4;
+}
+```
+
+发布/订阅的消息格式可以使用ROS自带类型，也可以自定义类型，可以使用protobuf形式定义。
+
+2. 注册对应的Adapter适配器类
+
+```c++
+/// file in apollo/modules/common/adapters/message_adapters.h
+using TrafficLightDetectionAdapter = Adapter<perception::TrafficLightDetection>;
+```
+
+3. 注册对应的消息发布、订阅、回调函数接口
+
+```c++
+/// file in apollo/modules/common/adapters/adapter_gflags.cc
+// Step 1: create topic name
+DEFINE_string(traffic_light_detection_topic, "/apollo/perception/traffic_light",
+              "traffic light detection topic name");
+// Add myself topic name
++DEFINE_string(mynode_topic, "/apollo/perception/mynode",
++              "myself node topic name");
+
+/// file in apollo/modules/common/adapters/adapter_manager.h
+// Step 2: register adapter
+class AdapterManager {
+  ...
+  REGISTER_ADAPTER(TrafficLightDetection);    
+  // Add myself Adpater
++ REGISTER_ADAPTER(Mynode)
+};
+
+/// file in apollo/modules/common/adapters/proto/adapter_config.proto
+// Step 3: configure adapter config
+message AdapterConfig {
+  enum MessageType {
+    TRAFFIC_LIGHT_DETECTION = 12;
+    // add new type
++   MYNODE = 43
+}
+
+/// file in apollo/modules/common/adapters/adapter_manager.cc
+// Step 4: init topic node
+void AdapterManager::Init(const AdapterManagerConfig &configs) {
+  ...
+  case AdapterConfig::TRAFFIC_LIGHT_DETECTION:
+        EnableTrafficLightDetection(FLAGS_traffic_light_detection_topic, config);
+  // Add a new case
++ case AdapterConfig::MYNODE: EnableMynode(FLAGS_mynode_topic, config)
+  ...
+}
+```
+
+4. 自定义子节点类XXXSubnode，继承Subnode类，只需要在该子节点类的Init函数中加入对应的回调函数MynodeCallbackFunc即可
+```c++
+// construct function XXXSubnode --> InitInternal
+bool XXXSubnode::InitInternal() {
+  AdapterManager::AddMynodeCallback(&XXXSubnode::MynodeCallbackFunc, this);
+}
+```
+
+最后XXXSubnode订阅完以后，当有节点发布"/apollo/perception/mynode"这个topic的时候，`XXXSubnode::MynodeCallbackFunc`函数就会被调用，可以做后续的处理
+
+5. 消息发布。当有节点需要发布该topic的时候，只需要调用`AdapterManager::PublishMynode(result);`即可
+
+
+#### 自定义共享数据类型存储
+
+这小姐我们具体的研究一下整个自定义类型的消息发布与接收过程。消息的发布主要有两部分组成：ShareData消息存储、EventManager消息记录。
+
+- ShareData消息存储主要的工作是保存消息的具体传输数据，比如信号灯id、信号灯状态等，主要穿件一个对应的MyType类，将传输信息封装到该类的对象中，存入对应ShareData容器中即可。ShareData类已经在上面讲述过了，该类里面包含了一个map<string, DataType>，可以通过Add函数将数据加入该容器类中。
+- EventManager消息记录主要保存类似于“头部”信息，包括消息发送时间、消息发送方、接收方等信息。该过程的信息保存于EventMeta、Event中，发布与订阅由EventManager托管。
+
+首先看一下Event和EventMeta数据结构
+
+```c++
+struct Event {
+  EventID event_id = 0;  // using EventID = int;
+  double timestamp = 0.0;
+  std::string reserve;
+  double local_timestamp = 0.0;  // local timestamp to compute process delay.
+  Event() { local_timestamp = TimeUtil::GetCurrentTime(); }
+};
+
+struct EventMeta {
+  EventID event_id;    // using EventID = int;
+  std::string name;
+  SubnodeID from_node; // SubnodeID = int;
+  SubnodeID to_node;
+  EventMeta() : event_id(0), from_node(0), to_node(0) {}
+
+};
+```
+
+可以看到Event类里面记录了事件id、时间戳ts以及一些保留信息；而在EventMeta里面则增加了发送发和接收方，发送方接收方可以构成一条边Edge，具体可以参考[DAG有向图初始化](#有向图初始化)
+
+从有向图初始化过程可以看到DAG_Stream控制所有的Subnode、ShareData和Edge，而每个Subnode的Edge的初始化由以下函数段完成
+
+```c++
+/// file in apollo/modules/perception/onboard/dag_streaming.cc
+bool DAGStreaming::InitSubnodes(const DAGConfig& dag_config) {
+  const DAGConfig::SubnodeConfig& subnode_config = dag_config.subnode_config();
+  const DAGConfig::EdgeConfig& edge_config = dag_config.edge_config();
+  
+  map<SubnodeID, DAGConfig::Subnode> subnode_config_map;
+  map<SubnodeID, vector<EventID>> subnode_sub_events_map;
+  map<SubnodeID, vector<EventID>> subnode_pub_events_map;
+   
+
+  for (auto& edge_proto : edge_config.edges()) {
+    SubnodeID from = edge_proto.from_node();
+    SubnodeID to = edge_proto.to_node();
+    ...
+    for (auto& event_proto : edge_proto.events()) {
+      subnode_pub_events_map[from].push_back(event_proto.id());
+      subnode_sub_events_map[to].push_back(event_proto.id());
+    }
+  }
+
+  // Generate Subnode instance.
+  for (auto pair : subnode_config_map) {
+    const DAGConfig::Subnode& subnode_config = pair.second;
+    const SubnodeID subnode_id = pair.first;
+    Subnode* inst = SubnodeRegisterer::GetInstanceByName(subnode_config.name());
+    ...
+    bool result = inst->Init(             // initalize each subnode's edge information
+        subnode_config, &event_manager_, &shared_data_manager_,
+        subnode_sub_events_map[subnode_id], subnode_pub_events_map[subnode_id]);
+    ...
+    subnode_map_.emplace(subnode_id, std::unique_ptr<Subnode>(inst));
+  }
+}
+
+/// file in apollo/modules/perception/onboard/subnode.cc
+bool Subnode::Init(const DAGConfig::Subnode &subnode_config,
+                   const vector<EventID> &sub_events,
+                   const vector<EventID> &pub_events,
+                   EventManager *event_manager,
+                   SharedDataManager *shared_data_manager) {
+  
+  event_manager_ = event_manager;
+  shared_data_manager_ = shared_data_manager;
+
+  // fill sub and pub meta events. sub_meta_events_: vector<EventMeta>
+  if (!event_manager_->GetEventMeta(sub_events, &sub_meta_events_)) {
+  }
+  // pub_meta_events_: vector<EventMeta>
+  if (!event_manager_->GetEventMeta(pub_events, &pub_meta_events_)) {
+  }
+
+  if (!InitInternal()) {
+  }
+}
+
+```
+
+函数中`inst->Init()`完成初始化，所以经过初始化完以后，每个Subnode就知道自己的接受列表`sub_meta_events_`和发布列表`pub_meta_events_`
+
+- 每次开始执行ProcEvents函数的时候，需要先去自己的sub_meta_events_列表中找到所有的对象(Event展开而来)
+
+- 每次结束执行ProcEvents函数的时候，需要将结果发送给所有pub_meta_events_列表中的对象
+
+Event的发布和订阅也比较简单，我们观察一下代码
+
+```c++
+/// file in apollo/modules/perception/onboard/event_manager.cc
+bool EventManager::Subscribe(EventID event_id, Event *event, bool nonblocking) {
+  EventQueue *queue = GetEventQueue(event_id);
+
+  if (nonblocking) {
+    return queue->try_pop(event);
+  }
+
+  queue->pop(event);
+  return true;
+}
+
+bool EventManager::Publish(const Event &event) {
+  EventQueue *queue = GetEventQueue(event.event_id);
+
+  if (!queue->try_push(event)) {
+    queue->clear();
+
+    // try second time.
+    queue->try_push(event);
+  }
+  return true;
+}
+```
+
+所以EventManager对每个Event_id维持一个队列，根据Event id获取对应的队列以后，发布消息只要将消息push进队列，而订阅消息只要从队列中取出头元素即可。
+
+下面我们看一下具体的例子：
+E.g. TLProcessSubnode的输入是以自定义数据存储发布消息的
+
+```c++
+/// file in apollo/modules/perception/traffic_light/onboard/tl_proc_subnode.cc
+Status TLProcSubnode::ProcEvents() {
+  Event event;
+  const EventMeta &event_meta = sub_meta_events_[0];
+  if (!event_manager_->Subscribe(event_meta.event_id, &event)) {
+    ...
+  }
+  if (!ProcEvent(event)) {
+    AERROR << "TLProcSubnode failed to handle event. "
+           << "event:" << event.to_string();
+    return Status(ErrorCode::PERCEPTION_ERROR,
+                  "TLProcSubnode failed to handle event.");
+  }
+  return Status::OK();
+}
+
+bool TLProcSubnode::ProcEvent(const Event &event) {
+  const double timestamp = event.timestamp;
+  const std::string device_id = event.reserve;
+  std::string key;
+  if (!SubnodeHelper::ProduceSharedDataKey(timestamp, device_id, &key)) {
+  }
+  SharedDataPtr<ImageLights> image_lights;
+  if (!preprocessing_data_->Get(key, &image_lights)) {
+  }
+}
+```
+
+可以看到获取消息头部(Event)代码必须先获取该节点的接受列表，上述代码中`sub_meta_events_[0]`，因为该节点只有一个输入，第一个元素即可。然后根据Event id使用`EventManager::Subscribe`即可得到Event信息。最后使用Event的时间戳ts和保留信息段，去ShareData里面获取传输数据
+
+E.g. TLPreprocessSubnode的输出是以自定义数据存储发布消息的
+
+```c++
+bool TLPreprocessorSubnode::AddDataAndPublishEvent(
+    const std::shared_ptr<ImageLights> &data, const CameraId &camera_id,
+    double timestamp) {
+  // add data down-stream
+  std::string device_str = kCameraIdToStr.at(camera_id);
+  std::string key;
+  if (!SubnodeHelper::ProduceSharedDataKey(timestamp, device_str, &key)) {
+    return false;
+  }
+
+  if (!preprocessing_data_->Add(key, data)) {
+    data->image.reset();
+    return false;
+  }
+
+  // pub events
+  for (size_t i = 0; i < this->pub_meta_events_.size(); ++i) {
+    const EventMeta &event_meta = this->pub_meta_events_[i];
+    Event event;
+    event.event_id = event_meta.event_id;
+    event.reserve = device_str;
+    event.timestamp = timestamp;
+    this->event_manager_->Publish(event);
+  }
+  return true;
+}
+```
+上面代码也是如此，发布数据分两步，保存传输数据到ShareData共享容器中；记录头部信息发布到EventManager中。关联两者的就是时间戳timestamp和保留信息-设备信息device_str。所以可以根据EventManager中的EventMeta来生成key去提取ShareData
