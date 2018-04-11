@@ -19,6 +19,7 @@
 		- [SubNode子节点类初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#子节点类初始化)
 		- [DAG有向图初始化](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#有向图初始化)
 		- [DAG整体运行实现感知](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#DAG运行)
+		- [消息发布与订阅](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/perception_software_arch.md/#消息发布与接收)
 	- [激光雷达障碍物感知: LiDAR Obstacle Perception](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_arch.md)
 		- [高精地图ROI过滤器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_1_hdmap.md)
 		- [基于卷积神经网络分割](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_2_cnn.md)
