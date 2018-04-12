@@ -321,7 +321,7 @@ bool TLPreprocessor::SyncImage(const ImageSharedPtr &image, ImageLightsPtr *imag
   - 缓存查询SynImage(必须要)，匹配缓存，找到合适的记录
   - 二次映射验证VerifyLightsProjection(必须要)，验证本次signals映射坐标
 
-## Step 4. 信息校验
+## Step 4. 信息发布
 
 当二次验证也通过时，就可以发布信息给Process阶段进行后续处理。
 
@@ -360,4 +360,4 @@ bool TLPreprocessorSubnode::AddDataAndPublishEvent(
 
 代码显示信息发布过程是人为的写入共享数据类队列中TLPreprocessingData，而event_manager做信息记录。
 
-Traffic Light Preprocess子节点发布的消息内容包含：时间戳和相机id
+Traffic Light Preprocess子节点发布的消息内容包含：时间戳和相机id、ImageLights类(包含信号灯hdmap roi、projection_roi等信息)
