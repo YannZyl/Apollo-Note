@@ -759,7 +759,7 @@ bool XXXSubnode::InitInternal() {
 
 #### 自定义共享数据类型存储
 
-这小姐我们具体的研究一下整个自定义类型的消息发布与接收过程。消息的发布主要有两部分组成：ShareData消息存储、EventManager消息记录。
+这小节我们具体的研究一下整个自定义类型的消息发布与接收过程。消息的发布主要有两部分组成：ShareData消息存储、EventManager消息记录。
 
 - ShareData消息存储主要的工作是保存消息的具体传输数据，比如信号灯id、信号灯状态等，主要穿件一个对应的MyType类，将传输信息封装到该类的对象中，存入对应ShareData容器中即可。ShareData类已经在上面讲述过了，该类里面包含了一个map<string, DataType>，可以通过Add函数将数据加入该容器类中。
 - EventManager消息记录主要保存类似于“头部”信息，包括消息发送时间、消息发送方、接收方等信息。该过程的信息保存于EventMeta、Event中，发布与订阅由EventManager托管。
