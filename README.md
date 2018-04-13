@@ -25,6 +25,7 @@
 		- [基于卷积神经网络分割](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_2_cnn.md)
 		- [MinBox障碍物边框构建](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_3_minibox.md)
 		- [HM对象跟踪](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_4_hmtrack.md)
+		- [跟踪信息融合](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_5_fusion.md)
 	- 雷达障碍物感知: RADAR Obstacle Perception
 	- 障碍物结果融合: Result Fusion
 	- [信号灯预处理: Traffic Light Preprocess](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/traffic_lights_preprocess.md)
@@ -49,3 +50,4 @@ References：
 - [感知模块：扫描线算法](https://www.jianshu.com/p/d9be99077c2b)
 - [感知模块：并查集算法](https://www.cnblogs.com/shadowwalker9/p/5999029.html)
 - [感知模块：二分图匹配-匈牙利算法](https://en.wikipedia.org/wiki/Hungarian_algorithm)
+- [感知模块：维特比Viterbi算法](https://zh.wikipedia.org/wiki/%E7%BB%B4%E7%89%B9%E6%AF%94%E7%AE%97%E6%B3%95)
