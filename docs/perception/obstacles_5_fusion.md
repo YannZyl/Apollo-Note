@@ -19,12 +19,14 @@
 
 E.g. 5次跟踪的结果显示某物体的类别/Probs分别为：
 
+|  --  |  -- |  -- |  --  |  --  |  --  |
 |  跟踪时间戳  |  UNKNOWN概率  | PEDESTRIAN概率  |  BICYCLE概率  |  VEHICLE概率 |  Argmax结果 |
 |  frame1  |  0.1  |  0.2  |  0.6  |  0.1  |  BICYCLE  |
 |  frame2  |  0.1  |  0.1  |  0.7  |  0.1  |  BICYCLE  |
 |  frame3  |  0.1  |  0.2  |  0.2  |  0.5  |  VEHICLE  |
 |  frame4  |  0.1  |  0.2  |  0.6  |  0.1  |  BICYCLE  |
 |  frame5  |  0.1  |  0.2  |  0.6  |  0.1  |  BICYCLE  |
+|  --  |  -- |  -- |  --  |  --  |  --  |
 
 如果直接对每次跟踪使用`argmax(Probs)`直接得到结果，有时候会有误差，上表frame3的时候因为误差结果被认为是汽车，所以需要根据前面的N次跟踪结果一起联合确定物体类别属性。Apollo使用维特比算法求解隐状态概率。
 
@@ -160,15 +162,21 @@ single_prob = conf * single_prob + (1.0 - conf) * confidence_smooth_matrix_ * si
 iter->second(CNNSegClassifier Matrix)矩阵为：
 
 0.9095 0.0238 0.0190 0.0476
+
 0.3673 0.5672 0.0642 0.0014
+
 0.1314 0.0078 0.7627 0.0980
+
 0.3383 0.0017 0.0091 0.6508
 
 confidence_smooth_matrix_(Confidence)矩阵为：
 
 1.00 0.00 0.00 0.00
+
 0.40 0.60 0.00 0.00
+
 0.40 0.00 0.60 0.00
+
 0.50 0.00 0.00 0.50
 
 ----------------------------------------------------------------------
@@ -176,6 +184,7 @@ confidence_smooth_matrix_(Confidence)矩阵为：
 Viterbi算法推理代码如下：
 
 ```c++
+/// file in apollo/modules/perception/common/sequence_type_fuser/sequence_type_fuser.cc
 bool SequenceTypeFuser::FuseWithCCRF(std::map<int64_t, std::shared_ptr<Object>>* tracked_objects) {
   /// rectify object type with smooth matrices
   ...
@@ -204,9 +213,7 @@ bool SequenceTypeFuser::FuseWithCCRF(std::map<int64_t, std::shared_ptr<Object>>*
     }
   }
   std::shared_ptr<Object> object = tracked_objects->rbegin()->second;
-  RecoverFromLogProb(&fused_sequence_probs_.back(), &object->type_probs,
-                     &object->type);
-
+  RecoverFromLogProb(&fused_sequence_probs_.back(), &object->type_probs, &object->type);
   return true;
 }
 ```
@@ -271,13 +278,54 @@ for (std::size_t right = 0; right < VALID_OBJECT_TYPE; ++right) {  // time seque
 }
 ```
 
-从上述代码和注释，可以很明显的看到求解的过程，最终可以得到一条由后往前连接的状态链。
+从上述代码和注释，可以很明显的看到求解的过程，`fused_sequence_probs_`是各个时刻物体的真实修正状态，`state_back_trace_`是一条由后往前连接的最佳回溯状态链，如下图：
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/perception_obstacles/perception_obstacles_5_vertibi.png)
 
 Apollo状态转移矩阵为
 
 0.34 0.22 0.33 0.11
+
 0.03 0.90 0.05 0.02
+
 0.03 0.05 0.90 0.02
+
 0.06 0.01 0.03 0.90
+
+经过上述计算得到的`fused_sequence_probs_`矩阵就是所有时刻跟踪物体的状态概率(log(·)处理过，所以必须经过exp(·)还原概率)，最后就是求解当前时刻，也就是sequence最后一列各类物体的概率。
+
+```c++
+// get current time tracked object, last elem in sequence
+std::shared_ptr<Object> object = tracked_objects->rbegin()->second; 
+// post-process
+RecoverFromLogProb(&fused_sequence_probs_.back(), &object->type_probs, &object->type);
+
+bool SequenceTypeFuser::RecoverFromLogProb(Vectord* prob,
+                                           std::vector<float>* dst,
+                                           ObjectType* type) {
+  fuser_util::ToExp(prob);     // probability log(·) format to origin format by using exp(·) 
+  fuser_util::Normalize(prob);  
+  fuser_util::FromEigenVector(*prob, dst);  // assign probability from origin 6 classes to 4 classes
+  *type = static_cast<ObjectType>(std::distance(dst->begin(), std::max_element(dst->begin(), dst->end()))); // type with max prob
+  return true;
+}
+
+void FromEigenVector(const Vectord& src_prob, std::vector<float>* dst_prob) {
+  dst_prob->assign(static_cast<int>(ObjectType::MAX_OBJECT_TYPE), 0);
+  dst_prob->at(0) = src_prob(0);
+  for (std::size_t i = 3; i < static_cast<int>(ObjectType::MAX_OBJECT_TYPE); ++i) {
+    dst_prob->at(i) = static_cast<float>(src_prob(i - 2));
+  }
+}
+```
+
+上面代码之所以有`FromEigenVector`过程，主要是Apollo原始定义了6中object type：
+
+- UNKNOWN--未知物体
+- UNKNOWN_MOVABLE--未知可移动物体
+- UNKNOWN_UNMOVABLE--未知不可移动物体
+- PEDESTRIAN--行人
+- BICYCLE--自行车辆
+- VEHICLE--汽车车辆
+
+实际只用到了0,3,4,5四类。
