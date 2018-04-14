@@ -363,3 +363,30 @@ bool TLProcSubnode::PublishMessage(const std::shared_ptr<ImageLights> &image_lig
 1. Traffic Light Process子节点最终发布结果是以ROS消息订阅与发布机制完成的，`AdapterManager::PublishTrafficLightDetection`中注册了各类topic，其中包括TrafficLightDetection类型的topic。
 
 2. 发布的消息内容包含有：时间戳、信号灯id、信号灯状态置信度、信号灯颜色、是否包含信号灯等信息。
+
+```proto
+// file in apollo/modules/perception/proto/traffic_light_detection.proto
+message TrafficLight {
+    enum Color {
+        UNKNOWN = 0;
+        RED = 1;
+        YELLOW = 2;
+        GREEN = 3;
+        BLACK = 4;
+    };
+    optional Color color = 1;
+    // Traffic light string-ID in the map data.
+    optional string id = 2;
+    // How confidence about the detected results, between 0 and 1.
+    optional double confidence = 3 [default = 1.0];
+    // Duration of the traffic light since detected.
+    optional double tracking_time = 4;
+}
+
+message TrafficLightDetection {
+    optional apollo.common.Header header = 2;
+    repeated TrafficLight traffic_light = 1;
+    optional TrafficLightDebug traffic_light_debug = 3;
+    optional bool contain_lights = 4;
+}
+```

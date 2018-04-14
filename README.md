@@ -30,6 +30,11 @@
 	- 障碍物结果融合: Result Fusion
 	- [信号灯预处理: Traffic Light Preprocess](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/traffic_lights_preprocess.md)
 	- [信号灯处理: Traffic Light Process](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/traffic_lights_process.md)
+	- CameraProcessSubnode(未启用，暂不更新)
+	- CIPVSubnode(未启用，暂不更新)
+	- LanePostProcessingSubnode(未启用，暂不更新)
+	- AsyncFusionSubnode(未启用，暂不更新)
+	- VisualizationSubnode(未启用，暂不更新)
 
 Links:
 
