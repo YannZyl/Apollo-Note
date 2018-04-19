@@ -27,7 +27,7 @@
 		- [HM对象跟踪](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_lidar_4_hmtrack.md)
 		- [跟踪信息融合](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_lidar_5_fusion.md)
 	- [雷达障碍物感知: Radar Obstacle Perception](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_radar_arch.md)
-	- 障碍物结果融合: Result Fusion
+	- 障碍物结果融合: Result Fusion(同Lidarhe Radar信息融合，多类Sensor一起加入跟踪列表)
 	- [信号灯预处理: Traffic Light Preprocess](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/traffic_lights_preprocess.md)
 	- [信号灯处理: Traffic Light Process](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/traffic_lights_process.md)
 	- CameraProcessSubnode(未启用，暂不更新)

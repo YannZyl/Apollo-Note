@@ -466,7 +466,7 @@ void HungarianMatcher::ComputeConnectedComponents(
 }
 ```
 
-主要的子图划分工作在`ConnectedComponentAnalysis`函数完成，具体的可以参考代码，相对来说比较简单。最后得到的`components`二维向量中，每一行为一个子图的组成元素。
+主要的子图划分工作在`ConnectedComponentAnalysis`函数完成，具体的可以参考代码，一个比较简单地广度优先搜索。最后得到的`components`二维向量中，每一行为一个子图的组成元素。
 
 3. 匈牙利算法对每个子图匹配
 
