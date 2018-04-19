@@ -38,7 +38,7 @@
 
 References：
 
-- 感知模块：相机标定 Camera Calibration(待完善)
+- [感知模块：相机标定 Camera Calibration](https://blog.csdn.net/honyniu/article/details/51004397)
 - [感知模块：ROS tf坐标系介绍](http://wiki.ros.org/tf/Tutorials#Learning_tf)
 - [感知模块：ROS tf坐标系转换Example](http://wiki.ros.org/navigation/Tutorials/RobotSetup/TF)
 - [感知模块：ROS&&PCL PointCloud点云介绍](http://wiki.ros.org/pcl/Overview)
