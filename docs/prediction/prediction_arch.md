@@ -46,11 +46,11 @@ ContainerManager::Init
 std::unique_ptr<Container> ContainerManager::CreateContainer(
     const common::adapter::AdapterConfig::MessageType& type) {
   std::unique_ptr<Container> container_ptr(nullptr);
-  if (type == AdapterConfig::PERCEPTION_OBSTACLES) {
+  if (type == AdapterConfig::PERCEPTION_OBSTACLES) {         // 1. Obstacle container
     container_ptr.reset(new ObstaclesContainer());
-  } else if (type == AdapterConfig::LOCALIZATION) {
+  } else if (type == AdapterConfig::LOCALIZATION) {          // 2. localization container
     container_ptr.reset(new PoseContainer());
-  } else if (type == AdapterConfig::PLANNING_TRAJECTORY) {
+  } else if (type == AdapterConfig::PLANNING_TRAJECTORY) {   // 3. trajectory container
     container_ptr.reset(new ADCTrajectoryContainer());
   }
   return container_ptr;
@@ -85,7 +85,7 @@ Container* ContainerManager::GetContainer(
 
 ### PoseContainer车辆姿态容器
 
-车辆姿态容器主要存储的是车辆的世界坐标系坐标、世界坐标系(东-北-天)到车辆坐标系(右-前-上)的变换矩阵、速度信息、偏航角等信息。
+车辆姿态容器主要存储的是车辆的世界坐标系坐标、世界坐标系(东-北-天)到车辆坐标系(右-前-上)的变换矩阵、速度信息等信息。
 
 ```c++
 /// file in apollo/modules/prediction/container/pose/pose_container.cc
@@ -106,7 +106,7 @@ void PoseContainer::Update(const localization::LocalizationEstimate& localizatio
   position.set_x(localization.pose().position().x());
   position.set_y(localization.pose().position().y());
   position.set_z(localization.pose().position().z());
-  obstacle_ptr_->mutable_position()->CopyFrom(position);	// localization in Earch/North/Up referencr frame
+  obstacle_ptr_->mutable_position()->CopyFrom(position);      // localization in Earch/North/Up referencr frame
 
   double theta = 0.0;
   if (localization.pose().has_orientation() &&
@@ -117,12 +117,12 @@ void PoseContainer::Update(const localization::LocalizationEstimate& localizatio
     double qw = localization.pose().orientation().qw();
     double qx = localization.pose().orientation().qx();
     double qy = localization.pose().orientation().qy();
-    double qz = localization.pose().orientation().qz();     // world2vechile transform matrix
+    double qz = localization.pose().orientation().qz();       
     theta = ::apollo::common::math::QuaternionToHeading(qw, qx, qy, qz);
   }
-  obstacle_ptr_->set_theta(theta);							// theta
+  obstacle_ptr_->set_theta(theta);                            // world2vechile transform matrix
 
-  Point velocity;											// velocity in Earch/North/Up referencr frame
+  Point velocity;                                             // velocity in Earch/North/Up referencr frame
   velocity.set_x(localization.pose().linear_velocity().x());
   velocity.set_y(localization.pose().linear_velocity().y());
   velocity.set_z(localization.pose().linear_velocity().z());
@@ -133,7 +133,7 @@ void PoseContainer::Update(const localization::LocalizationEstimate& localizatio
 }
 ```
 
-### 障碍物容器
+### ObstaclesContainer障碍物容器
 
 ```c++
 void ObstaclesContainer::Insert(const ::google::protobuf::Message& message) {
@@ -168,7 +168,51 @@ LRU存储的更新方式：
 1. 当障碍物没有出现过，即首次出现。那么使用`obstacles_.Put`函数，将Obstacle封装成Node，然后加入map中，同时节点放在双向链的最末端，表示最近刚访问过。如果LRU缓存满了，那么就解绑/删除双向链第一个节点(最早访问的节点)，同时删除map中该节点的键值对，在进行末尾添加
 2. 当障碍物出现过了，只要进行更新就行。首先更新map中的val值，然后找到双向链中node的位置，先解绑，然后绑到双向链最末端即可。`obstacle_ptr->Insert`函数即可，`obstacles_.GetSilently(id)`返回的是node的V引用类型(&Obstacle)
 
-### 
+### ADCTrajectoryContainer轨迹容器
+
+在障碍物容器和车辆姿态容器中，存储的信息已经比较了解，前者是Perception模块检测到的障碍物信息，后者是定位产生的车辆姿态信息。而在轨迹容器中，我们不曾接触过其中的内容，所以这里我们就对ADCTrajectoryContainer中用到的各种概念做一个简介。
+
+```c++
+using ::apollo::common::PathPoint;
+using ::apollo::common::TrajectoryPoint;
+using ::apollo::common::math::LineSegment2d;
+using ::apollo::common::math::Polygon2d;
+using ::apollo::common::math::Vec2d;
+using ::apollo::hdmap::JunctionInfo;
+using ::apollo::planning::ADCTrajectory;
+```
+
+**1. PathPoint -- apollo/modules/common/proto/pnc_point.proto**
+
+|  属性名  |  protobuf关键字类型  |                 说明               |
+|  ------  |  ------------------  |  --------------------------------- |
+|     x    |        optional      |     路径点x坐标(世界坐标系ENU)     |
+|     y    |        optional      |     路径点y坐标(世界坐标系ENU)     |
+|     z    |        optional      |     路径点z坐标(世界坐标系ENU)     |
+|   theta  |        optional      |          x-y平面方向/角度          |
+|   kappa  |        optional      |              x-y平面曲线           |
+|     s    |        optional      |            与起始点的累计距离      |
+|  dkappa  |        optional      |  x-y平面曲线一次导数，用于计算曲率 |
+|  ddkappa |        optional      |  x-y平面曲线二次倒数，用于计算曲率 |
+|  lane_id |        optional      |       PathPoint点所在道路线id      |
+
+**2. TrajectoryPoint -- apollo/modules/common/proto/pnc_point.proto**
+
+|      属性名     |  protobuf关键字类型  |                 说明               |
+|  -------------  |  ------------------  |  --------------------------------- |
+|    PathPoint    |        optional      |        常规的PathPoint路径点       |
+|        v        |        optional      |              轨迹点速度            |
+|        a        |        optional      |             轨迹点加速度           |
+|  relative_time  |        optional      |      从轨迹起始点的累计相对时间    |
+
+**3. ADCTrajectory -- apollo/modules/planning/proto/planning.proto**
+
+|      属性名     |  protobuf关键字类型  |                 说明               |
+|  -------------  |  ------------------  |  --------------------------------- |
+|    PathPoint    |        optional      |        常规的PathPoint路径点       |
+|        v        |        optional      |              轨迹点速度            |
+|        a        |        optional      |             轨迹点加速度           |
+|  relative_time  |        optional      |      从轨迹起始点的累计相对时间    |
 
 ## EvaluatorManager管理器
 
