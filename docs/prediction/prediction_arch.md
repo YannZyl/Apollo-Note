@@ -200,19 +200,37 @@ using ::apollo::planning::ADCTrajectory;
 
 |      属性名     |  protobuf关键字类型  |                 说明               |
 |  -------------  |  ------------------  |  --------------------------------- |
-|    PathPoint    |        optional      |        常规的PathPoint路径点       |
+|    PathPoint    |        optional      |PathPoint类型，常规的PathPoint路径点|
 |        v        |        optional      |              轨迹点速度            |
 |        a        |        optional      |             轨迹点加速度           |
 |  relative_time  |        optional      |      从轨迹起始点的累计相对时间    |
 
 **3. ADCTrajectory -- apollo/modules/planning/proto/planning.proto**
+     
+|      属性名     |  protobuf关键字类型  |                        说明                            |
+|  -------------  |  ------------------  |         ---------------------------------              |
+|    header       |        optional      |                 message头部                            |
+|total_path_length|        optional      |                 路径总长度                             |
+| trajectory_point|        repeated      |       TrajectoryPoint类型，路径轨迹点集合，数据带速度  |
+|  estop          |        optional      |           紧急停车标志，包含是紧急停车标志位与停车理由 |
+|  path_point     |        repeated      |  PathPoint类型，路径轨迹点集合，数据不带速度，有冗余性 |
+|  is_replan      |        optional      |           轨迹是否需要重新规划                         |
+|  gear           |        optional      |           特定轨迹齿轮(这里不做了解Canbus模块)         |
+|  decision       |        optional      |  车联决策结果，包含沿车道线前进、停车、倒车、车道线变换、车辆信号等信息 |
+|  latency_stats  |        optional      |         延时状态信息                                   |
+|  adc_path_point |        repeated      |           现由path_point代替                           |
+|  adc_trajectory_point |  repeated      |           现由trajectory_point代替                     |
+|  signal         |        optional      |  车辆信号，左转、右转or保持不变，近光灯、远光灯、喇叭、双闪等信号灯指令 |
+|  right_of_way_status  |  optional      |          当前车道车辆是否有权通行                      |
+|  lane_id        |        optional      |           当前点所在车道线id(相对于参考车道)           |
+|  engage_advice  |        optional      |          根据当前的计划结果设置合作建议。              |
+| critical_region |        optional      |          关心的区域，当对路况不确定时，该项内容为空    |
 
-|      属性名     |  protobuf关键字类型  |                 说明               |
-|  -------------  |  ------------------  |  --------------------------------- |
-|    PathPoint    |        optional      |        常规的PathPoint路径点       |
-|        v        |        optional      |              轨迹点速度            |
-|        a        |        optional      |             轨迹点加速度           |
-|  relative_time  |        optional      |      从轨迹起始点的累计相对时间    |
+从上述三个protobuf的message形式可以看到：
+
+- PathPoint是最基本的点表示形式，包含点的坐标，方向曲率等信息；
+- TrajectoryPoint是轨迹表示的基本点，封装了PathPoint的基础上，加入了改点的速度与加速度信息，以及距离起始点的累计时间；
+- ADCTrajectory就是完整的轨迹信息，不仅包含了轨迹中等时间的轨迹点，也包含了车辆的决策信息，控制信号，车道线信息等。
 
 ## EvaluatorManager管理器
 
