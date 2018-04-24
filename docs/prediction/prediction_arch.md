@@ -222,7 +222,7 @@ using ::apollo::planning::ADCTrajectory;
 |  adc_trajectory_point |  repeated      |           现由trajectory_point代替                     |
 |  signal         |        optional      |  车辆信号，左转、右转or保持不变，近光灯、远光灯、喇叭、双闪等信号灯指令 |
 |  right_of_way_status  |  optional      |          当前车道车辆是否有权通行                      |
-|  lane_id        |        optional      |           当前点所在车道线id(相对于参考车道)           |
+|  lane_id        |        repeated      |           当前点位置所有车道线id(相对于参考车道)       |
 |  engage_advice  |        optional      |          根据当前的计划结果设置合作建议。              |
 | critical_region |        optional      |          关心的区域，当对路况不确定时，该项内容为空    |
 
