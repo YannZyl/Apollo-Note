@@ -286,18 +286,18 @@ void ADCTrajectoryContainer::SetJunctionPolygon() {
 
   for (int i = 0; i < adc_trajectory_.trajectory_point_size(); ++i) {
     double s = adc_trajectory_.trajectory_point(i).path_point().s();
-    if (s > FLAGS_adc_trajectory_search_length) {
+    if (s > FLAGS_adc_trajectory_search_length) {   // consider recent point, future point exclude
       break;
     }
-    if (junction_info != nullptr) {
+    if (junction_info != nullptr) {                 // if the nearest junction is found, exit loop
       break;
     }
-    double x = adc_trajectory_.trajectory_point(i).path_point().x();
+    double x = adc_trajectory_.trajectory_point(i).path_point().x();   // search junctions from hd map in point
     double y = adc_trajectory_.trajectory_point(i).path_point().y();
     std::vector<std::shared_ptr<const JunctionInfo>> junctions =
         PredictionMap::GetJunctions({x, y}, FLAGS_junction_search_radius);
-    if (!junctions.empty() && junctions.front() != nullptr) {
-      junction_info = junctions.front();
+    if (!junctions.empty() && junctions.front() != nullptr) {          // if find, set junction info
+      junction_info = junctions.front();                               // NOTE: junction_info must be the nearest junction
     }
   }
 
