@@ -313,7 +313,7 @@ double local_theta = raw_obstacles.contiobs(i).oritation_angle() / 180.0 * M_PI;
 Eigen::Vector3f direction = Eigen::Vector3f(cos(local_theta), sin(local_theta), 0); 
 direction = radar_pose.topLeftCorner(3, 3).cast<float>() * direction; // transform direction to world frame
 object_ptr->direction = direction.cast<double>();
-object_ptr->theta = theta;
+object_ptr->theta = std::atan2(direction(1), direction(0));
 ```
 
 不过正如[博客](https://read01.com/mE3M8Ny.html#.WtRvL2pubDc)所说，这里很奇怪，Radar直接将物体长宽高设置为1，而且type类别设置为UNKNOWN，但是在Step2背景校验中`contiobs.obstacle_class()`来获得雷达监测到的类型，这里有些矛盾，很可能是Apollo对雷达准确度可够可靠。
