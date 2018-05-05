@@ -362,8 +362,132 @@ double LineSegment2d::ProjectOntoUnit(const Vec2d &point) const {
 
 ### SetNearbyLanes邻接车道设置
 
+邻接车道设置与当前候选车道设置很相似，由`PredictionMap::NearbyLanesByCurrentLanes`完成原始的车道获取，获取的方式很简单
+
+```c++
+/// file in apollo/modules/prediction/common/prediction_map.cc
+void PredictionMap::NearbyLanesByCurrentLanes(
+    const Eigen::Vector2d& point, const double heading, const double radius,
+    const std::vector<std::shared_ptr<const LaneInfo>>& lanes,
+    const int max_num_lane,
+    std::vector<std::shared_ptr<const LaneInfo>>* nearby_lanes) {
+  if (lanes.size() == 0) {
+    std::vector<std::shared_ptr<const LaneInfo>> prev_lanes(0);
+    OnLane(prev_lanes, point, heading, radius, false, max_num_lane,
+           FLAGS_max_lane_angle_diff, nearby_lanes);
+  } else {
+    std::unordered_set<std::string> lane_ids;
+    for (auto& lane_ptr : lanes) {
+      for (auto& lane_id : lane_ptr->lane().left_neighbor_forward_lane_id()) {
+        ...
+      }
+      for (auto& lane_id : lane_ptr->lane().right_neighbor_forward_lane_id()) {
+        ...
+      }
+    }
+  }
+}
+```
+
+处理过程为：
+
+如果传入的传输lanes为空，那么与调用OnLane函数或者半径radius以内，夹角不超过FLAGS_max_lane_angle_diff的所有lane；否者就直接从hdmap的Lane结构中获取左右两边车道。因为Lane这个protobuf具有
+
+```protobuf
+repeated Id left_neighbor_forward_lane_id = 10;
+repeated Id right_neighbor_forward_lane_id = 11;
+
+```
+
 ### SetLaneGraphFeature车道图结构体设置
 
+车道图结构体设置，主要是讲当前车道和邻接车道信息进行整合，得到当前路况下的一个完整的车道序列。我们通过其定义的protobuf结构了解一下车道序列LaneSequence的一些内容：
+
+```proto
+message LanePoint {
+    optional apollo.common.Point3D position = 1;
+    optional double heading = 2 [default = 0.0];
+    optional double width = 3 [default = 0.0];
+    optional double relative_s = 4 [default = 0.0];
+    optional double relative_l = 5 [default = 0.0];
+    optional double angle_diff = 6 [default = 0.0];
+}
+
+message LaneSegment {
+    optional string lane_id = 1;
+    optional double start_s = 2 [default = 0.0];
+    optional double end_s = 3 [default = 0.0];
+    optional uint32 lane_turn_type = 4 [default = 0];
+    repeated LanePoint lane_point = 5;
+    optional double total_length = 6 [default = 0.0];
+}
+
+message NearbyObstacle {
+    optional int32 id = 1;
+    optional double s = 2;
+}
+
+message LaneSequence {                             
+    optional int32 lane_sequence_id = 1;              // 包含序列id
+    repeated LaneSegment lane_segment = 2;            // 序列段，与Segments相似，但不同
+    repeated NearbyObstacle nearby_obstacle = 3;      // 附近物体信息
+
+    message Features {
+        repeated double mlp_features = 1;
+    }
+    optional Features features = 4;
+    optional int32 label = 5 [default = 0];
+    optional double probability = 6 [default = 0.0];
+    optional double acceleration = 7 [default = 0.0];
+    repeated apollo.common.PathPoint path_point = 8;
+}
+
+message LaneGraph {
+    repeated LaneSequence lane_sequence = 1;  // 车道图有一系列车道序列组成，一个车道序列即为一个Lane
+}
+```
+
+`Obstacle::SetLaneGraphFeature`函数的作用其实就是把原先的当前车道current_lane和邻接车道nearby_lane封装到LaneSequence里面，最后保存到Feature内。本质上就把Lane里面的起始累计距离start_s, 终点累计距离end_s，车道总长度total_length, id等信息保存到LandSequence中。
+
+
+```c++
+/// file in apollo/modules/prediction/container/obstacles/obstacle.cc
+void Obstacle::SetLaneGraphFeature(Feature* feature) {
+  // 保存当前车道信息到Feature
+  for (auto& lane : feature->lane().current_lane_feature()) {
+    ...
+  }
+  // 保存邻接车道信息到Feature
+  for (auto& lane : feature->lane().nearby_lane_feature()) {
+    ...
+  }
+
+  if (feature->has_lane() && feature->lane().has_lane_graph()) {
+    SetLanePoints(feature);
+    SetLaneSequencePath(feature->mutable_lane()->mutable_lane_graph());
+  }
+}
+```
+
+车道图结构设置，其实是根据上时刻的方向与速度，生成一段局部的LaneSequence。然后计算物体在这段局部Lane上面的投影。同时对Segment进行点划分，每隔FLAGS_target_lane_gap(默认2米)采样，最后LandSequence中的segment可以得到若干LandPoint。
+
+SetLaneSequencePath函数其实就是对每两个LandPoint计算相对累计距离，与两侧道路线最小宽度，方向二次导数等信息。
+
+
+```
+lane_point.mutable_position()->set_x(lane_point_pos[0]);      // 等间隔点x坐标
+lane_point.mutable_position()->set_y(lane_point_pos[1]);      // 等间隔点y坐标
+lane_point.set_heading(lane_point_heading);                   // 采样点运动方便
+lane_point.set_width(lane_point_width);                       // 车道宽度
+double lane_s = -1.0;              
+double lane_l = 0.0;
+PredictionMap::GetProjection(position, lane_info, &lane_s, &lane_l);
+lane_point.set_relative_s(total_s);                     // 相对于车道起始点，累计距离
+lane_point.set_relative_l(0.0 - lane_l);                // 点与车道两侧最小距离
+lane_point.set_angle_diff(lane_point_angle_diff);       // 物体运动方向与投影点方向夹角
+lane_segment->set_lane_turn_type(PredictionMap::LaneTurnType(lane_id));
+lane_segment->add_lane_point()->CopyFrom(lane_point);
+```
 
 ## ADCTrajectoryContainer轨迹容器
 
