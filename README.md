@@ -36,6 +36,10 @@
 	- AsyncFusionSubnode(未启用，暂不更新)
 	- VisualizationSubnode(未启用，暂不更新)
 - [预测模块笔记](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/prediction_arch.md)
+	- [ContainerManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/container_manager.md)
+	- [EvaluatorManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/evaluator_manager.md)
+	- [PredictorManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/predictor_manager.md)
+	- [轨迹预测机制](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/prediction_progress.md)
 
 References：
 
