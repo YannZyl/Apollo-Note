@@ -29,3 +29,5 @@ Status Prediction::Init() {
 1. 第一类为管理器类，做的工作主要是负责一些数据或者api函数的管理，比如`AdapterManager`类的作用是管理各个topic对应的发布订阅函数、回调添加函数等。
 
 2. 第二类为输入输出定义，这里可看到Prediction有三类输入，分别是：车辆位置信息(Localization topic)、高精地图与路径规划信息(Planning topic)，视觉感知障碍物信息(PerceptionObstacles topic)。
+
+注意：其实在Apollo代码中`Prediction::OnLocalization`和`Prediction::OnPlanning`两个回调函数其实只是刷新管理器类中的车辆定位与轨迹数据(Insert函数)，因此这两个函数不需要去过分关注，只要关注`Prediction::RunOnce`即可。下面我们将注意描述上述的各个管理器类和回调函数工作内容与流程。

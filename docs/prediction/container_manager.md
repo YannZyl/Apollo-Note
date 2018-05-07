@@ -592,7 +592,7 @@ using ::apollo::planning::ADCTrajectory;
 |     y    |        optional      |     路径点y坐标(世界坐标系ENU)     |
 |     z    |        optional      |     路径点z坐标(世界坐标系ENU)     |
 |   theta  |        optional      |          x-y平面方向/角度          |
-|   kappa  |        optional      |              x-y平面曲线           |
+|   kappa  |        optional      |                x-y平面曲线         |
 |     s    |        optional      |            与起始点的累计距离      |
 |  dkappa  |        optional      |  x-y平面曲线一次导数，用于计算曲率 |
 |  ddkappa |        optional      |  x-y平面曲线二次倒数，用于计算曲率 |
@@ -633,3 +633,106 @@ using ::apollo::planning::ADCTrajectory;
 - PathPoint是最基本的点表示形式，包含点的坐标，方向曲率等信息；
 - TrajectoryPoint是轨迹表示的基本点，封装了PathPoint的基础上，加入了改点的速度与加速度信息，以及距离起始点的累计时间；
 - ADCTrajectory就是完整的轨迹信息，不仅包含了轨迹中等时间的轨迹点，也包含了车辆的决策信息，控制信号，车道线信息等。
+
+总体上讲一个ADCTrajectory就是当前位置到目标位置的一条路径，起点是当前位置，重点是目标位置，里面的信息都是当前时刻的信息，例如lane_id就是当前点(起始点)车辆附近的车道线信息；decision是当前时刻，车辆的一些决策信息。当车辆前进过程中，ADCTrajectory会实时更新，里面的信息都是当前时刻的一些路况和决策信息。
+
+
+**4. JunctionInfo -- apollo/modules/map/hdmap/hdmap_common.h**
+
+```proto
+/// file in apollo/modules/map/proto/map_id.proto
+message Id {                  // Global unique ids for all objects (include lanes, junctions, overlaps, etc).
+  optional string id = 1;
+}
+/// file in apollo/modules/map/proto/map_geometry.proto
+message Polygon {
+  repeated apollo.common.PointENU point = 1;  // East-North-Up coordinate referencr: (x,y,z)
+}
+/// file in apollo/modules/map/proto/map_junction.proto
+message Junction {                  // An junction is the junction at-grade of two or more roads crossing.
+  optional Id id = 1;
+  optional Polygon polygon = 2;
+  repeated Id overlap_id = 3;
+}
+```
+
+|      成员名     |         返回值       |                        说明                            |
+|  -------------  |  ------------------  |         ---------------------------------              |
+|    id()         |        ID            |                 返回路口的id                           |
+|    junction()   |        Junction      |                 返回路口的结构体(Id,Polygen)           |
+| polygon()       |        Polygon2d     |   返回路由的多边形区域，Polygon2d类型，由junction().polygon转换而来(去掉过近的顶点)   |
+|  OverlapStopSignIds |  vector<Id>      |           返回停车标志,由junction().overlap_id得到     |
+|  Init()         |        void          |  从 Junction message中得到id，polygon和overlap_id      |
+|  PostProcess()  |        void          |           确定当前地图上有的物体(overlap)，如车道线、信号灯、停车标志灯       |
+|  junction_      |        -             |          路口结构体，存储路口id、路口多边形凸包、当前路口的overlap id             |
+|  polygon_       |        -             |  路口多边形凸包，由junction_.polygon()得到，去除过近的顶点 |
+|  overlap_stop_sign_ids_  |      -      |  vector<Id>，路口的覆盖物体的id                        |
+|  overlap_ids_   |        -             |  vector<Id>，覆盖区域集合，当前地图可能有多快覆盖区域  |
+
+从上述message和类中，可以看到JunctionInfo类，主要是包含了当前路口的多边形凸包、覆盖区域及其区域中的物体id。接下去我们从代码入手，查看一下`ADCTrajectoryContainer::Insert`回调函数做的工作内容：
+
+```c++
+/// file in apollo/modules/prediction/container/adc_trajectory/adc_trajectory_container.cc
+void ADCTrajectoryContainer::Insert(const ::google::protobuf::Message& message) {
+  adc_trajectory_.CopyFrom(dynamic_cast<const ADCTrajectory&>(message));
+  // Find junction
+  if (IsProtected()) {
+    SetJunctionPolygon();
+  }
+  // Find ADC lane sequence
+  SetLaneSequence();
+}
+
+void ADCTrajectoryContainer::SetJunctionPolygon() {
+  std::shared_ptr<const JunctionInfo> junction_info(nullptr);
+
+  for (int i = 0; i < adc_trajectory_.trajectory_point_size(); ++i) {
+    double s = adc_trajectory_.trajectory_point(i).path_point().s();
+    if (s > FLAGS_adc_trajectory_search_length) {   // 仅考虑搜索半径范围内的轨迹点，太远的不用考虑
+      break;
+    }
+    if (junction_info != nullptr) {                 // 如果找到了距离当前位置最近的路口，成功并退出
+      break;
+    }
+    double x = adc_trajectory_.trajectory_point(i).path_point().x();   // 根据该轨迹点坐标去搜索附近的路口
+    double y = adc_trajectory_.trajectory_point(i).path_point().y();
+    std::vector<std::shared_ptr<const JunctionInfo>> junctions =
+        PredictionMap::GetJunctions({x, y}, FLAGS_junction_search_radius);
+    if (!junctions.empty() && junctions.front() != nullptr) {          // 如果找到了设置第一个路口
+      junction_info = junctions.front();                               // NOTE: junction_info must be the nearest junction
+    }
+  }
+
+  if (junction_info != nullptr && junction_info->junction().has_polygon()) {
+    std::vector<Vec2d> vertices;
+    for (const auto& point : junction_info->junction().polygon().point()) {
+      vertices.emplace_back(point.x(), point.y());
+    }
+    if (vertices.size() >= 3) {
+      adc_junction_polygon_ = Polygon2d{vertices};
+    }
+  }
+}
+
+void ADCTrajectoryContainer::SetLaneSequence() {
+  for (const auto& lane : adc_trajectory_.lane_id()) {
+    if (!lane.id().empty()) {
+      adc_lane_seq_.emplace_back(lane.id());
+    }
+  }
+  adc_lane_ids_.clear();
+  adc_lane_ids_.insert(adc_lane_seq_.begin(), adc_lane_seq_.end());
+}
+```
+
+上述代码比较长，我们将介绍一下insert过程的工作，Insert函数主要包含两个工作内容：路口查找和车道线设置。通过分析我们可以得到：
+
+1. 参数`::google::protobuf::Message& message`指的就是`planning::ADCTrajectory`，它是一条规划好的，从当前位置到目标地点的完整路径，路径由一个个的点组成(`path_point`或者`trajectory_point`)
+
+2. `SetJunctionPolygon`作用是为车辆寻找下一个路口，前提条件是当前道路是有权通行的。寻找下一个路口的方法为：
+
+- 遍历路径上的所有点，查看坐标点的s。s越大说明离当前位置越远，当s超过阈值(`FLAGS_adc_trajectory_search_length`，默认10m)，就不考虑这个点了，因为未来太远了，不需要过早地去寻找路口，当靠近的时候可以再寻找该点附近的路口。
+- 如果s在10m以内，那么根据这个点的世界坐标(x,y)去高精地图查找该点附近(`FLAGS_junction_search_radius`，默认1m)的路口信息。如果查到了该点附近有路口(!junctions.empty())，那么最近路口就设置为这个路口；否则就查询下一个点的附近路口信息
+- 当有查到路口信息时(junction_info != nullptr)，结束循环，先处理这个路口；然后车辆前进一段距离，得到新的AdjTractory去寻找更远的路口。同时设置路口的多边形区域/凸包。
+
+3. `SetLaneSequence`设置当前位置的车道线信息。
