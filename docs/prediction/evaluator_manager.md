@@ -317,3 +317,5 @@ double ValidationChecker::ProbabilityByCentripedalAcceleration(const LaneSequenc
 ```
 
 最后LaneSequence的概率为probability\*centripetal_acc_probability
+
+总结一下EvaluatorManager管理器的作用，对ContainerManager中每个障碍物LaneGraph中的LaneSequence进行逐个评估，结果生成每个LaneSequence的几率，即每种运动方案/轨迹的概率

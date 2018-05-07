@@ -742,3 +742,5 @@ void ADCTrajectoryContainer::SetLaneSequence() {
 - 当有查到路口信息时(junction_info != nullptr)，结束循环，先处理这个路口；然后车辆前进一段距离，得到新的AdjTractory去寻找更远的路口。同时设置路口的多边形区域/凸包。
 
 3. `SetLaneSequence`设置当前位置的车道线信息。
+
+总结一下ContainerManeager管理器的作用：信息的存储！其中很重要的环节就是对每个障碍物都进行LaneGraph的构建，LaneSequence表明障碍物运动的方案；而LaneSequence里面的vector<LaneSegment>则表示了这个方案中，物体前进的车道段。
