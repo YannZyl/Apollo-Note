@@ -447,12 +447,15 @@ message LaneGraph {
 }
 ```
 
-`Obstacle::SetLaneGraphFeature`函数的作用其实就是把原先的当前车道current_lane和邻接车道nearby_lane封装到LaneSequence里面，最后保存到Feature内。本质上就把Lane里面的起始累计距离start_s, 终点累计距离end_s，车道总长度total_length, id等信息保存到LandSequence中。
-
+`Obstacle::SetLaneGraphFeature`函数的作用其实就是把原先的当前车道current_lane和邻接车道nearby_lane封装到LaneSequence里面，最后保存到Feature内。但是这里做了一个处理，即截取当前车道和邻接车道的部分路畅，因为预测是有时间局部性和空间局部性的，那些太长的Lane，只要关注当前位置的邻域即可，具体的邻域如何设置？
 
 ```c++
 /// file in apollo/modules/prediction/container/obstacles/obstacle.cc
 void Obstacle::SetLaneGraphFeature(Feature* feature) {
+  double road_graph_distance = std::max(
+      speed * FLAGS_prediction_duration +
+      0.5 * FLAGS_max_acc * FLAGS_prediction_duration *
+      FLAGS_prediction_duration, FLAGS_min_prediction_length);
   // 保存当前车道信息到Feature
   for (auto& lane : feature->lane().current_lane_feature()) {
     ...
@@ -469,10 +472,83 @@ void Obstacle::SetLaneGraphFeature(Feature* feature) {
 }
 ```
 
-车道图结构设置，其实是根据上时刻的方向与速度，生成一段局部的LaneSequence。然后计算物体在这段局部Lane上面的投影。同时对Segment进行点划分，每隔FLAGS_target_lane_gap(默认2米)采样，最后LandSequence中的segment可以得到若干LandPoint。
+可以看到预测的距离(也是图的大小，换句话说也就是物体当前位置邻域半径)计算方式为：$s=vt+0.5at^2$，最基本的物理上的距离计算方式。所以`Obstacle::SetLaneGraphFeature`通过对当前车道CurrentLane和邻接车道NearbyLane截取其邻域，可以降低存储，合情合理。通过截取邻域，那么就可以对截取到的所有Lane(包括CurrentLane和NearbyLane)进行Lane的分割，分割成一个个的LaneSegment，与HD Map中的Segment2d基本类似。(区别：Lane+Segment2d可以存储整条车道，用于HD Map中； LaneSequence+LaneSegment可以存储截取的车道，更加轻量级)
 
-SetLaneSequencePath函数其实就是对每两个LandPoint计算相对累计距离，与两侧道路线最小宽度，方向二次导数等信息。
+在LaneSequence截取和LaneSegment分割的过程中，代码也相对比较简单，我们可以看一眼代码随便对他做一个解释，便于初学者理解。
 
+```c++
+/// file in apollo/master/modules/prediction/common/road_graph.cc
+void RoadGraph::ComputeLaneSequence(
+    const double accumulated_s, const double start_s,
+    std::shared_ptr<const LaneInfo> lane_info_ptr,
+    std::vector<LaneSegment>* const lane_segments,
+    LaneGraph* const lane_graph_ptr) const {
+  // Step 1
+  LaneSegment lane_segment;
+  lane_segment.set_lane_id(lane_info_ptr->id().id());
+  lane_segment.set_start_s(start_s);
+  lane_segment.set_lane_turn_type(PredictionMap::LaneTurnType(lane_info_ptr->id().id()));
+  if (accumulated_s + lane_info_ptr->total_length() - start_s >= length_) {
+    lane_segment.set_end_s(length_ - accumulated_s + start_s);
+  } else {
+    lane_segment.set_end_s(lane_info_ptr->total_length());
+  }
+  lane_segment.set_total_length(lane_info_ptr->total_length());
+
+  lane_segments->push_back(std::move(lane_segment));
+  // Step 2
+  if (accumulated_s + lane_info_ptr->total_length() - start_s >= length_ ||
+      lane_info_ptr->lane().successor_id_size() == 0) {
+    LaneSequence* sequence = lane_graph_ptr->add_lane_sequence();
+    *sequence->mutable_lane_segment() = {lane_segments->begin(),
+                                         lane_segments->end()};
+    sequence->set_label(0);
+  } else {
+    const double successor_accumulated_s =
+        accumulated_s + lane_info_ptr->total_length() - start_s;
+    for (const auto& successor_lane_id : lane_info_ptr->lane().successor_id()) {
+      auto successor_lane = PredictionMap::LaneById(successor_lane_id.id());
+      ComputeLaneSequence(successor_accumulated_s, 0.0, successor_lane,
+                          lane_segments, lane_graph_ptr);
+    }
+  }
+  lane_segments->pop_back();
+}
+
+```
+
+我们将上述计算LaneSequence分别两个步骤：
+
+**Step 1 设置LaneSequence的id，起始累计距离，总长度**
+
+注意，下面`if (accumulated_s + lane_info_ptr->total_length() - start_s >= length_)`这个if-else对意思是表明，如果当前物体所在的Lane起始累计距离是start_s，前面计算了邻域为length_($s=vt+0.5at^2$)，路得总长度为total_length。如果`total_length - start_s >= length_`，说明经过这个预测的前进长度以后物体还是在这条Lane上，所以end_s就变为start_s + length_；否者物体就超出了这条Lane，那么end_s也就是Lane的终点total_length. (这里的accumulated_s是需要分段才用到，下面将会提到)
+
+**Step 2 计算LaneSequence**
+
+还是一个if-else结构，当`total_length - start_s >= length_`时，说明物体下一时刻很大可能依旧在这条Lane上，所以当前的LaneSequence就是这条Lane的[start_s, start_s+length_]这段路；如果`total_length - start_s < length_ && lane_info_ptr->lane().successor_id_size() == 0`说明预测前进长度就要超出这条Lane，但是这条Lane没有后继的Lane(言外之意，这条路没有变道的可能)，那么LaneSequence也就只能设置[start_s, total_length]这段路了，其长度是不到length_的。这种情况下LaneGraph只有一个LaneSequence，同时LaneSequence就只有一个LaneSegment
+
+如果`total_length - start_s < length_ && lane_info_ptr->lane().successor_id_size() > 0`说明前进长度要超出这条Lane，但是物体可以变道继续前进，那么这时候一个LaneGraph就有多个LaneSequence，并且LaneSequence就有多个LaneSegment，每个LandSegment的lane_id不一定相同，因为存在物体变道的可能性。这种情况下accumulated_s就起到作用了，他记录了物体前面n个LaneSegment一共的距离，如果物体前面有一个LaneSegment，长度为length_1，那么变道后，只要计算length_ - length_1长度的LaneSegment即可。所以修正后，Step 1中的判断条件就变为`total_length - start_s >= length_ - accumulated_s`，也就是代码中的形式。
+
+下面将举个例子说明上述LaneSequence的计算过程：
+
+1. 假设当前物体所在的车道Lane_1的累计距离start_s=100, 总长度130，这时候经过预测得到的邻域范围为length_=20，由于在前进20米以后不会超出这条Lane，所以得到的LaneSequence只有一个LaneSegment，start_s=100, end_s=120, total_length=130
+
+2. 假设当前物体所在的车道Lane_1的累计距离start_s=100, 总长度110，Lane_1不能变道(successor_id_size()==0)！这时候经过预测得到的邻域范围为length_=20，由于在前进20米以后超出这条Lane，但由于不能变道，所以得到的LaneSequence只有一个LaneSegment，start_s=100, end_s=110, total_length=110
+
+3. 假设当前物体所在的车道Lane_1的累计距离start_s=100, 总长度110，Lane_1可以变道，变道至(Lane_2: start_s=0, total_length=50; Lane_3: start_s=0, total_length=100)！这时候经过预测得到的邻域范围为length_=20，由于在前进20米以后超出这条Lane，但可以变道，所以可以得到2个LaneSequence，每个LaneSequence有2个LaneSegment，分别是：
+
+- LaneSequence 1
+  - LaneSegment 1: lane_id=Lane_1, start_s=100, end_s=110, total_length=110
+  - LaneSegment 2: lane_id=Lane_2, start_s=0, end_s=10, total_length=50
+- LaneSequence 2
+  - LaneSegment 1: lane_id=Lane_1, start_s=100, end_s=110, total_length=110
+  - LaneSegment 2: lane_id=Lane_3, start_s=0, end_s=10, total_length=100
+
+**其实说白了LaneSequence就是当前情况下物体可能的前进方案，有可能是Lane_1到Lane_2(LaneSequence 1)，也可能是Lane_1到Lane_3(LaneSequence 2)，每种方案中物体经过的路段就是LaneSegment。**
+
+上面是LaneSequence的构建过程，如果当前已经存在了这条物体Lane对应的LaneGraph，那么只要修正一下LaneGraph里面的LaneSequence即可，修正过程只要修改LaneSequence的第一个LaneSegment的start_s即可，后续只要刷新一下里面的数据就行。当完成了LaneGraph的构建，当前车道和邻接车道截取邻域以后，下一步只要对LaneGraph里面LaneSequence中的LaneSegment分段离散化保存即可，E.G. 如果LaneSegment长度为20，那么通过采样，每2m一个点LanePoint，就可以将这条LaneSegment离散化10个点保存。
+
+这个过程主要有`SetLanePoints(feature)`和`SetLaneSequencePath(feature->mutable_lane()->mutable_lane_graph())`函数完成，设置的内容其实与Lane里面的Segment2d相似，
 
 ```
 lane_point.mutable_position()->set_x(lane_point_pos[0]);      // 等间隔点x坐标
@@ -487,6 +563,11 @@ lane_point.set_relative_l(0.0 - lane_l);                // 点与车道两侧最
 lane_point.set_angle_diff(lane_point_angle_diff);       // 物体运动方向与投影点方向夹角
 lane_segment->set_lane_turn_type(PredictionMap::LaneTurnType(lane_id));
 lane_segment->add_lane_point()->CopyFrom(lane_point);
+
+double delta_theta = apollo::common::math::AngleDiff(second_point->theta(), first_point->theta());
+double delta_s = second_point->s() - first_point->s();  
+double kappa = std::abs(delta_theta / (delta_s + FLAGS_double_precision));  // LaneSengment中PathPoint之间每1米运动方向变化大小
+lane_sequence->mutable_path_point(j)->set_kappa(kappa);
 ```
 
 ## ADCTrajectoryContainer轨迹容器
