@@ -546,7 +546,7 @@ void RoadGraph::ComputeLaneSequence(
 
 **其实说白了LaneSequence就是当前情况下物体可能的前进方案，有可能是Lane_1到Lane_2(LaneSequence 1)，也可能是Lane_1到Lane_3(LaneSequence 2)，每种方案中物体经过的路段就是LaneSegment。**
 
-上面是LaneSequence的构建过程，如果当前已经存在了这条物体Lane对应的LaneGraph，那么只要修正一下LaneGraph里面的LaneSequence即可，修正过程只要修改LaneSequence的第一个LaneSegment的start_s即可，后续只要刷新一下里面的数据就行。当完成了LaneGraph的构建，当前车道和邻接车道截取邻域以后，下一步只要对LaneGraph里面LaneSequence中的LaneSegment分段离散化保存即可，E.G. 如果LaneSegment长度为20，那么通过采样，每2m一个点LanePoint，就可以将这条LaneSegment离散化10个点保存。
+上面是LaneSequence的构建过程，如果当前已经存在了这条物体Lane对应的LaneGraph，那么只要修正一下LaneGraph里面的LaneSequence即可，修正过程只要修改LaneSequence的第一个LaneSegment的start_s即可，后续只要刷新一下里面的数据就行。当完成了LaneGraph的构建，当前车道和邻接车道截取邻域以后，下一步只要对LaneGraph里面LaneSequence中的LaneSegment分段离散化保存即可，E.G. 如果LaneSegment长度为20，那么通过采样，每2m一个点LanePoint，就可以将这条LaneSegment离散化10个点保存。**规定一个LaneSequence中所有的LaneSegment点最多不超过20个。**
 
 这个过程主要有`SetLanePoints(feature)`和`SetLaneSequencePath(feature->mutable_lane()->mutable_lane_graph())`函数完成，设置的内容其实与Lane里面的Segment2d相似，
 
@@ -566,9 +566,15 @@ lane_segment->add_lane_point()->CopyFrom(lane_point);
 
 double delta_theta = apollo::common::math::AngleDiff(second_point->theta(), first_point->theta());
 double delta_s = second_point->s() - first_point->s();  
-double kappa = std::abs(delta_theta / (delta_s + FLAGS_double_precision));  // LaneSengment中PathPoint之间每1米运动方向变化大小
+double kappa = std::abs(delta_theta / (delta_s + FLAGS_double_precision));  // 曲率半径R倒数
 lane_sequence->mutable_path_point(j)->set_kappa(kappa);
 ```
+
+关于上述曲率半径R的计算，做一个简单的讲解，如果一个点P在圆上扫过一个delta_theta的角度，扫过的长度为delta_s，根据圆周长公式可以得到：
+
+delta_s = (delta_theta / 2pi) * 2pi * R
+
+所以有： R = delta_s / delta_theta
 
 ## ADCTrajectoryContainer轨迹容器
 
