@@ -205,24 +205,24 @@ double time_to_lat_end_state = std::max(FLAGS_default_time_to_lat_end_state, Com
 
 Free Move预测模式更加简单，仅仅是根据障碍物的运动模式进行预测。举个例子
 
-障碍物当前时刻坐标： P(x,y)
-障碍物当前时刻速度(矢量)： (v_x, v_y)
-障碍物当前时刻速度(标量)： speed=sqrt(v_x\*v_x+v_y\*v_y)
-障碍物当前时刻加速度(矢量)： (acc_x, acc_y)
-障碍物当前时刻加速度： acc
-障碍物当前时刻偏航角: theta(因为不知道上时刻的障碍物位置，所以不知道偏航角，计算第一个点时时暂时保留)
+- 障碍物当前时刻坐标： P(x,y)
+- 障碍物当前时刻速度(矢量)： (v_x, v_y)
+- 障碍物当前时刻速度(标量)： speed=sqrt(v_x\*v_x+v_y\*v_y)
+- 障碍物当前时刻加速度(矢量)： (acc_x, acc_y)
+- 障碍物当前时刻加速度： acc
+- 障碍物当前时刻偏航角: theta(因为不知道上时刻的障碍物位置，所以不知道偏航角，计算第一个点时时暂时保留)
 
 当经过period时刻以后：
 
-障碍物x方向运动的距离：s_x = v_x * period + 0.5 * acc_x * period * period
-障碍物x方向运动的距离：s_y = v_y * period + 0.5 * acc_y * period * period
+- 障碍物x方向运动的距离：s_x = v_x * period + 0.5 * acc_x * period * period
+- 障碍物x方向运动的距离：s_y = v_y * period + 0.5 * acc_y * period * period
 
-障碍物坐标: P2(x+s_x, y+s_y)
-障碍物速度(矢量)： (v_x+acc_x\*period, v_y+acc_y\*period)
-障碍物当前时刻速度(标量)： speed_t=sqrt(v_x\*v_x+v_y\*v_y)
-障碍物当前时刻加速度(矢量)： (acc_x, acc_y) (假设这个短时间内，加速度不变)
-障碍物当前时刻加速度： acc = (speed_t - speed) / period
-**上时刻障碍物偏航角: theta = actan(P2.y-P.y, P2.x-P.x) (利用本次位置和上一次位置，可以计算上一次的偏航角)**
+- 障碍物坐标: P2(x+s_x, y+s_y)
+- 障碍物速度(矢量)： (v_x+acc_x\*period, v_y+acc_y\*period)
+- 障碍物当前时刻速度(标量)： speed_t=sqrt(v_x\*v_x+v_y\*v_y)
+- 障碍物当前时刻加速度(矢量)： (acc_x, acc_y) (假设这个短时间内，加速度不变)
+- 障碍物当前时刻加速度： acc = (speed_t - speed) / period
+- **上时刻障碍物偏航角: theta = actan(P2.y-P.y, P2.x-P.x) (利用本次位置和上一次位置，可以计算上一次的偏航角)**
 
 
 最终总结Predictor的作用：根据LaneSequence的概率，以及预先规划好的ADCTrajectory对LaneSequence进行筛选，去掉那些不合理的行驶方案，最后得到一些短时间轨迹的集合。
