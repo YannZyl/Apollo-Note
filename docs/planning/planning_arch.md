@@ -8,10 +8,14 @@ Apollo针对路径规划的思想是，利用Routing模块产生一条当前位�
 
 Planning模块组件分为以下部分：
 
-1. 规划与控制地图: Planning and Control Map, pnc map
+1. 车辆状态提供器: VehicleStateProvider
+
+这是最简单的组件，他负责将定位Localization与底盘Chassis信息进行融合，得到当前车辆的状态
+
+2. 规划与控制地图: Planning and Control Map, pnc map
 
 pnc map其实和高精地图hd map没有关系，后者是专门为规划与控制模块设计的库函数，在hd map层次之上，负责一些地图相关信息的处理。例如查询车辆可能的形式路径(list<RouteSegments>)
 
-2. 基准线提供器: Reference Line Provider
+3. 基准线提供器: Reference Line Provider
 
 基准线提供器其实就是路径的生成，对于一系列的RouteSegments进行平滑与拼接，最终得到无人车形式的基准线，也就是行驶路径。
