@@ -40,6 +40,9 @@
 	- [EvaluatorManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/evaluator_manager.md)
 	- [PredictorManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/predictor_manager.md)
 	- [轨迹预测机制](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/prediction_progress.md)
+- [规划模块笔记](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/planning_arch.md)
+	- [规划与控制地图: pnc map](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/pnc_map.md)
+	- [基准线提供器: ReferenceLineProvider](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/reference_line_provider.md)
 
 References：
 
