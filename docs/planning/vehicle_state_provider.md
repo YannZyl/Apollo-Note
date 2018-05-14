@@ -17,7 +17,7 @@ private:
 }
 ```
 
-这两个成员对应的类型都是以protobuf的形式定义，下面我们可以看一下`VehicleState`和`LocalizationEstimate`的定义：
+这两个成员对应的类型都是以protobuf的形式定义，`original_localization_`其实并不是主要成员，`vehicle_state_`才是完整保存车辆状态的载体，下面我们可以看一下`VehicleState`的定义：
 
 ```protobuf
 import "modules/canbus/proto/chassis.proto";
