@@ -474,7 +474,7 @@ void Obstacle::SetLaneGraphFeature(Feature* feature) {
 SetLaneSequencePath函数其实就是对每两个LandPoint计算相对累计距离，与两侧道路线最小宽度，方向二次导数等信息。
 
 
-```
+```c++
 lane_point.mutable_position()->set_x(lane_point_pos[0]);      // 等间隔点x坐标
 lane_point.mutable_position()->set_y(lane_point_pos[1]);      // 等间隔点y坐标
 lane_point.set_heading(lane_point_heading);                   // 采样点运动方便
