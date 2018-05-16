@@ -4,7 +4,7 @@ ContainerManager管理器得到了每个障碍物的LaneGraph，里面包含了�
 
 EvaluatorManager管理器对每个障碍物的每条运动路线(LaneSequence)进行评估，评估指标共62项，包括22项障碍物特征，40项车道特征。最后得到每个LaneSequence的概率。
 
-当经过EvaluatorManager评估以后，就可以根据规则得到障碍物有可能的运动轨迹(运动方案)，这时候我们就可以针对每个障碍物生成一条短时间内的运动轨迹。这些运动轨迹可以交由Planning模块进行路径重规划。这里的障碍物短时间内运动轨迹是什么概念？障碍物当前位置(x,y)，还有速度，加速度，速度方向。由ContainerManager可知，我们对LaneSegment是经过离散采样保存的，所以障碍物短时间内的运动轨迹是指：当前位置到LaneSequence的第一个LanePoint的运动轨迹。如果一个障碍物的LaneGraph由N条LaneSequence，那么该障碍物就对应了m条轨迹，这m条轨迹是概率最大的那几条(具体挑选规则在下文提到)
+当经过EvaluatorManager评估以后，就可以根据规则得到障碍物有可能的运动轨迹(运动方案)，这时候我们就可以针对每个障碍物生成一条短时间内的运动轨迹。这些运动轨迹可以交由Planning模块进行路径重规划。这里的障碍物短时间内运动轨迹是什么概念？障碍物当前位置(x,y)，还有速度，加速度，速度方向。由ContainerManager可知，我们对LaneSegment是经过离散采样保存的，所以障碍物短时间内的运动轨迹是指：当前位置到LaneSequence的第一个最近的LanePoint的运动轨迹。如果一个障碍物的LaneGraph由N条LaneSequence，那么该障碍物就对应了m条轨迹，这m条轨迹是概率最大的那几条(具体挑选规则在下文提到)
 
 ```proto
 /// file in apollo/modules/prediction/conf/prediction_conf.pb.txt
@@ -129,7 +129,7 @@ LaneSequence第一个LaneSegment对应的车道线: first_lane_id(feature.lane()
 
 - 如果LaneSequence和ADCTrajectory没有重叠，那么返回浮点数最大值即可
 
-- 如果LaneSequence和ADCTrajectory存在重叠，那么计算ADCTrajectory第一个点p1(也就是主车的位置)到LaneSequence的第一个LanePoint：p2之间的距离，计算方法也比较简单，将ADCTrajectory第一个点投影到LaneSegment对应的车道上，返回两个点的累计距离差 renturn fabs(p1.s-p2.s)
+- 如果LaneSequence和ADCTrajectory存在重叠，那么计算ADCTrajectory第一个点p1(也就是主车的位置)到LaneSequence的第一个LanePoint(准确的说是p1之后的LaneSequence中第一个LanePoint)之间的距离，计算方法也比较简单，将ADCTrajectory第一个点投影到LaneSegment对应的车道上，返回两个点的累计距离差 renturn fabs(p1.s-p2.s)
 
 3. 最后对上述距离做是否有效的统计
 
@@ -152,7 +152,7 @@ Eigen::Vector2d position(feature.position().x(), feature.position().y());
 double time_to_lat_end_state = std::max(FLAGS_default_time_to_lat_end_state, ComputeTimeToLatEndConditionByVelocity(obstacle, lane_sequence));
 ```
 
-这个相对来说不难理解，因为障碍物当前位置由x和y方向的速度vx和vy，同时可以计算得到障碍物到LaneSequence的第一个LanePoint所在Lane的侧面距离relative_l，已经LaneSequence的第一个LanePoint的方向lane_heading，那么只要计算vx和vy在lane_heading垂直方向的分量`v_l = v_y * std::cos(lane_heading) - v_x * std::sin(lane_heading)`，然后relative_l / v_l即可
+这个相对来说不难理解，因为障碍物当前位置由x和y方向的速度vx和vy，同时可以计算得到障碍物到LaneSequence的之后最近LanePoint所在Lane的侧面距离relative_l，已经LaneSequence的第一个最近LanePoint的方向lane_heading，那么只要计算vx和vy在lane_heading垂直方向的分量`v_l = v_y * std::cos(lane_heading) - v_x * std::sin(lane_heading)`，然后relative_l / v_l即可
 
 2. 计算lane_heading侧方向(Lateral)的多项式表达式 (目前暂时没看明白多项式的由来)
 
@@ -194,7 +194,7 @@ double time_to_lat_end_state = std::max(FLAGS_default_time_to_lat_end_state, Com
 
 计算方法为：
 
-1. 首先将当前位置坐标P(x,y)投影到LaneSequence的第一个LanePoint对应的车道中心线上，得到对应车道上的点，此时车道上的投影点有累计距离lane_s和对应的投影距离lane_l，这里需要注意lane_l(对应上图中的realitive_l)是有正负(方向)的，若P2在P1下方，lane_l为负数；否则在上方为正数。
+1. 首先将当前位置坐标P(x,y)投影到LaneSequence的第一个最近的LanePoint对应的车道中心线上，得到对应车道上的点，此时车道上的投影点有累计距离lane_s和对应的投影距离lane_l，这里需要注意lane_l(对应上图中的realitive_l)是有正负(方向)的，若P2在P1下方，lane_l为负数；否则在上方为正数。
 
 2. 然后根据上述的period和speed可以计算每两次采样前进的距离，lane_s+=period\*speed
 
