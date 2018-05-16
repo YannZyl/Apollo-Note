@@ -17,7 +17,7 @@ private:
 }
 ```
 
-这两个成员对应的类型都是以protobuf的形式定义，`original_localization_`其实并不是主要成员，`vehicle_state_`才是完整保存车辆状态的载体，下面我们可以看一下`VehicleState`的定义：
+这两个成员对应的类型都是以protobuf的形式定义，第二项`original_localization_`其实并不是主要成员，仅仅是记录上一次更新的Localization而已。第一项`vehicle_state_`才是完整保存车辆状态的载体，下面我们可以看一下`VehicleState`的定义：
 
 ```protobuf
 import "modules/canbus/proto/chassis.proto";
@@ -42,8 +42,7 @@ message VehicleState {
 }
 ```
 
-
-从上述可以看到，`VehicleState`基本包含了车辆的定位、姿态与底盘信息。`LocalizationEstimate`也是一样，信息基本被包括在`VehicleState`内。由`VehicleStateProvider::Update`函数可以看到`VehicleState`的更新过程，需要定位信息与底盘信息。
+从上述可以看到，`VehicleState`基本包含了车辆的定位、姿态与底盘信息。由`VehicleStateProvider::Update`函数可以看到`VehicleState`的更新过程，需要定位信息与底盘信息。
 
 ```c++
 /// file in apollo/modules/common/vehicle_state/vehicle_state_provider.cc
@@ -54,7 +53,7 @@ Status VehicleStateProvider::Update(
 math::Vec2d VehicleStateProvider::EstimateFuturePosition(const double t) const
 ```
 
-车辆状态提供器有两个比较重要的函数或者功能，一个是上述的车辆状态更新函数`VehicleStateProvider::Update`；另一个则是根据当前车辆状态，给定一个时间t，来预测t时间后的车辆状态`VehicleStateProvider::EstimateFuturePosition`，注意，这个时间t必须是短时间内的预测，如果t过大，预测将不会准确(因为预测前提是假定这个时间段内，车辆的状态不变)。
+车辆状态提供器有两个比较重要的函数或者功能，一个是上述的车辆状态更新函数`VehicleStateProvider::Update`；另一个则是根据当前车辆状态，给定一个时间t，来预测t时间后的车辆状态`VehicleStateProvider::EstimateFuturePosition`，注意，这个时间t必须是短时间内的预测，如果t过大，预测将不会准确(因为预测前提是假定这个时间段内，车辆的速度、角速度等指标不变)。
 
 ## 1.车辆状态更新函数( `VehicleStateProvider::Update`)
 
@@ -111,7 +110,7 @@ math::Vec2d VehicleStateProvider::EstimateFuturePosition(const double t) const {
 
 查看齿轮状态，如果如果是倒车，速度就设置为负。
 
-2. 计算t时刻以后车辆的状态(世界西坐标)
+2. 计算t时刻以后车辆的状态(世界系坐标)
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/future_estimation.png)
 
@@ -144,3 +143,5 @@ math::Vec2d VehicleStateProvider::EstimateFuturePosition(const double t) const {
 ```
 
 从上述代码和图可以不难理解新坐标的计算方式，注意一点: `vehicle_state_.angular_velocity()`是带有正负性的，逆时针为正；顺时针为负，这样也就可以理解上述公式的符号。
+
+代码中还有一个细节，在求解x_new和y_new的过程中，上图只是给出了车辆在转弯或者有弧度行驶情况下的求解。若车辆直线行驶，或者有弧度行驶但是弧度很小(绕z轴的角速度很小)，该种情况下，x_new可以看成是始终在y轴上，而y_new就直接等于vt。
