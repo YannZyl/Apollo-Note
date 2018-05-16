@@ -118,8 +118,13 @@ bool PncMap::UpdateRoutingResponse(const routing::RoutingResponse &routing) {
 最终得到的结果：
 
 ```c++
-routing_waypoint_index_: [LaneWaypoint{id: 'lane 1', s: 105, j: 0},      // start point, s=105, j=0(route_indices_[0]: RoadSegment 0,Passage 0,LaneSegment 0)
-                          LaneWaypoint{id: 'lane 1', s: 185, j: 15},]    // end point, s=185, j=15(route_indices_[15]: RoadSegment 2,Passage 0,LaneSegment 2)
+routing_waypoint_index_: [
+                          // waypoint 1(start point), s=105, j=0(route_indices_[0]: RoadSegment 0,Passage 0,LaneSegment 0)
+                          LaneWaypoint{id: 'lane 1', s: 105, j: 0},      
+
+                          // waypoint 2(end point), s=185, j=15(route_indices_[15]: RoadSegment 2,Passage 0,LaneSegment 2)
+                          LaneWaypoint{id: 'lane 1', s: 185, j: 15}
+                         ]    
 ```
 
 ## 2. 短期路径段查询 (`PncMap::GetRouteSegments`)
