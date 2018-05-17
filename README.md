@@ -42,7 +42,7 @@
 	- [(总流程)轨迹预测机制](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/prediction_progress.md)
 - [规划模块笔记](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/planning_arch.md)
 	- [(组件)车辆状态提供器: VehicleStateProvider](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/vehicle_state_provider.md)
-	- [(组件)规划与控制地图: pnc map](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/pnc_map.md)
+	- [(组件)规划与控制地图: Pnc Map](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/pnc_map.md)
 	- [(组件)基准线提供器: ReferenceLineProvider](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/reference_line_provider.md)
 
 References：
