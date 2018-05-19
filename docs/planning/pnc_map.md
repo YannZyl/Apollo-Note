@@ -1,8 +1,14 @@
-# 规划与控制地图: pnc map
+# 规划与控制地图: Pnc Map
 
-pnc map其实和高精地图hd map没有关系，后者是专门为规划与控制模块设计的库函数，在hd map层次之上，负责一些地图相关信息的处理。例如查询车辆可能的形式路径(list<RouteSegments>)，这是pnc map最重要的功能。
+pnc map其实和高精地图hd map没有关系，后者是专门为规划与控制模块设计的库函数，在hd map层次之上，负责一些地图相关信息的处理。例如查询车辆可能的形式路由段(list<RouteSegments>)，然后对每个路由段合成一个路径Path，这是pnc map最重要的功能。
 
-pnc map目前被封装在基准线提供器ReferenceLineProvider中，但是由于其功能比较集中，我们单独将他拿出来讲解。下面我们将从代码入手，看看pnc map实现的功能有哪些。
+pnc map目前被封装在指引线提供器ReferenceLineProvider中，但是由于其功能比较集中，我们单独将他拿出来讲解。规划控制地图pnc map主要的功能有三个：
+
+1. 更新路由信息。这部分接受Routing模块的路径查询响应，将其响应信息处理存储到地图类中。
+
+2. 短期路径段查询。根据Routing规划路径以及当前车辆的位置，计算当前车辆可行驶的车道区域。
+
+3. 路径段生成最终路径。针对2中每个可行驶的车道路由段，生成一条路径Path，可以后续生成参考线Reference Line。
 
 ## 1. 更新路由信息 (`PncMap::UpdateRoutingResponse`)
 
@@ -151,7 +157,7 @@ bool PncMap::GetRouteSegments(const VehicleState &vehicle_state,
 
 第一个问题比较简单，Planning对主车"短期"路径查询的距离段由函数后向查询距离`backward_length`和前向查询距离`forward_length`决定，所以查询的路长为当前主车前后`backward_length + forward_length`距离的路段。
 
-额外补充一下，在基准线提供器中，调用该函数，后向查询距离`FLAGs_look_backward_distance`默认为30m，前向查询距离取决于主车速度，若速度很大 `linear_velocity() * FLAGS_look_forward_time_sec > FLAGS_look_forward_short_distance`，其中`FLAGS_look_forward_time_sec`默认8s，`FLAGS_look_forward_short_distance`默认150m)，前向查询设置为`look_forward_long_distance`，默认250m；否者速度小时设置为`FLAGS_look_forward_short_distance`，150m。
+额外补充一下，在指引线提供器中，调用该函数，后向查询距离`FLAGs_look_backward_distance`默认为30m，前向查询距离取决于主车速度，若速度很大 `linear_velocity() * FLAGS_look_forward_time_sec > FLAGS_look_forward_short_distance`，其中`FLAGS_look_forward_time_sec`默认8s，`FLAGS_look_forward_short_distance`默认150m)，前向查询设置为`look_forward_long_distance`，默认250m；否者速度小时设置为`FLAGS_look_forward_short_distance`，150m。
 
 在主车路径查询问题中，我们简单地将过程分为几个子流程，分别为：
 
@@ -177,6 +183,8 @@ bool PncMap::GetRouteSegments(const VehicleState &vehicle_state,
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/routing_segments.png)
 
 这部分由`UpdateVehicleState`函数完成，这个函数完成的工作就是计算上图中的红色部分：包括当前车辆在对应车道上的投影`adc_waypoint_`，车辆投影点所在LaneSegment在`route_indices_`中的索引`adc_route_index_`，下一个最近查询点在`routing_waypoint_index_`中的索引`next_routing_waypoint_index_`。
+
+**这里纠正一下，上图中的`adc_route_index_`写错了，不是6，而是15**
 
 - 计算车辆在对应车道上的投影`adc_waypoint_`
 
@@ -364,13 +372,13 @@ if (next_routing_waypoint_index_ < routing_waypoint_index_.size() &&
 
 ```c++
   std::unordered_set<std::string> neighbor_lanes;
-  if (source_passage.change_lane_type() == routing::LEFT) {
+  if (source_passage.change_lane_type() == routing::LEFT) {   // 当前passage是左转通道
     for (const auto &segment : source_segments) {     // 查询当前Passage中每个LaneSegment所在车道的邻接左车道
       for (const auto &left_id : segment.lane->lane().left_neighbor_forward_lane_id()) {
         neighbor_lanes.insert(left_id.id());
       }
     }
-  } else if (source_passage.change_lane_type() == routing::RIGHT) {
+  } else if (source_passage.change_lane_type() == routing::RIGHT) { 当前passage是右转通道
     for (const auto &segment : source_segments) {     // 查询当前Passage中每个LaneSegment所在车道的邻接右车道
       for (const auto &right_id : segment.lane->lane().right_neighbor_forward_lane_id()) {
         neighbor_lanes.insert(right_id.id());
@@ -692,5 +700,362 @@ if (index == passage_index) {
   route_segments->back().SetPreviousAction(routing::RIGHT);
 } else {                     // 如果当前车辆在passage右侧，那么车辆肯定需要向左变道到passage
   route_segments->back().SetPreviousAction(routing::LEFT);
+}
+```
+
+## 3. 路由段RouteSegments到最终路径的生成
+
+在上一个功能产生无人车短期规划路径，也就是行驶区域后，得到一个list<RouteSegments>的类型的结果，其中list中每个元素都是一个可能的形式路径。而最终路径的生成就是将上述的RouteSegments各个段，整合在一起并且拼接出一条完整的路径。这条最终的路径(Path类型)与HD Map中的车道Lane属性有点相似，不光是包含了各个LaneSegment，还有路径上的采样点，每个点的方向heading，以及减速带，交叉口，停车区的覆盖区域。
+
+RouteSegments中的每个段包含的属性有：
+
+- 所属车道id
+- 起始点累积距离start_s
+- 结束点累积距离end_s
+
+而在高精地图HD Map中，车道Lane的结构存储是拆分成若干LineSegment2d段，每个段都有上述三个属性(lane_id, start_s, end_s)，也包含这个段的方向(unit_direction)。此外，还采样了这条Lane中的若干路径点point作为轨迹来保存，所以每个段LineSegment2d中都包含有一些采样点。采样点机制可以更加细节化刻画这条车道的属性。
+
+但是RouteSegments中的段与HD Map中Lane的LineSegment2d又是不一样的。虽然两者都有上述三个属性，但是前者仅仅为了存储道路段，可以是很长的曲线道路段，因此只需要有lane_id, start_s和end_s即可，表示这条路起始到最终的路段，没有路段的细节信息；而后者是为了将Lane离散化采样存储，所以LineSegment2d是很短的道路段，长度不会太长(否则会丢失信息)，而且只能是直线段，同时额外包含细节信息，比如段的方向heading，段起始点坐标start_pos，段终点坐标end_pos等。
+
+RouteSegments路径点生成的主要目的，是查询HD Map，根据其车道Lane段内的采样点point，将这个大而宏观的的RouteSegment划分成小的离散的轨迹点MapPathPoint，然后这些点两两组合成一个小的LineSegment2d，顺便计算这个段的方向heading(结束点坐标-起始点坐标)，这样就可以将行驶区域与Lane一样，利用更小的"LineSegment2d"来保存。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/generate_path_1.png)
+
+如上图所示例子，图中给出了一个行驶方案。为了方便讲解，此处没有考虑到ExtendSegments，总共包含4个RoadSegments，每个RoadSegments由N个Passage(这里取一个做示例，所以是一个RouteSegments)，每个Passage包含3个LaneSegment。
+
+那么如果没有考虑到前向查询和后向查询的路径段扩充，最终得到的RouteSegments就包含了12段。每段都有所属车道编号lane_id, 段起始累计距离start_s, 段结束累积距离end_s，每个段都可以很长！为了更加细致的描述这条路由路径，我们取每个段所述的车道Lane中的采样点point。
+
+图中紫色point是"lane 1"HD Map中保存的采样点point，蓝色point是"lane 2"HD Map中保存的采样点point。从图中不难发现有7个紫色point在RouteSegments的区域内(对应"lane 1"部分)，5个蓝色point在RouteSegments区域内(对应"lane 2"部分)。所以这个RouteSegments就被离散化12个点进行保存。实际点可能更加密集，效果会更加好。每个点都可计算其点坐标，方向heading，以及该车道的累积距离。这些点就是被封装好的MapPathPoint。
+
+**RouteSegments表示不足之处**：另外还有一个原因是RouteSegments形式不够好，虽然RouteSegments中已经将路径比较好的表示了，但是如果想用{lane_id, start_s, end_s}形式来表示一条路径，其实可以更加方便高效的标识。为什么不把前7个段合并成一个大的LaneSegment，因为他们属于同一个车道"lane 1"，并且是相邻的段；而后面5个段可以合成另一个大的LaneSegment？
+
+所以总结一下：下面的工作主要有4步
+
+A. RouteSegments离散化MapPathPoint
+
+B. 离散LaneSegment2d && 重构RouteSegment的LaneSegment
+
+C. 道路采样点生成
+
+D. 覆盖区域设置
+
+### A. RouteSegments离散化MapPathPoint
+
+针对每个可行驶区域方案(RouteSegments，由多个段组成)，生成段内的MapPathPoint路径点，言外之意将RouteSegments以路径点的形式进一步离散化。
+
+由RouteSegments到vector<MapPathPoint>的生成函数如下，代码也是比较简单，这里不做多介绍。
+
+```c++
+/// file in apollo/modules/map/pnc_map/pnc_map.cc
+void PncMap::AppendLaneToPoints(LaneInfoConstPtr lane, const double start_s,
+                                const double end_s,
+                                std::vector<MapPathPoint> *const points) {
+  if (points == nullptr || start_s >= end_s) {
+    return;
+  }
+  double accumulate_s = 0.0;
+  for (size_t i = 0; i < lane->points().size(); ++i) {
+    if (accumulate_s >= start_s && accumulate_s <= end_s) {         // 封装中间点point
+      points->emplace_back(lane->points()[i], lane->headings()[i], LaneWaypoint(lane, accumulate_s));
+    }
+    if (i < lane->segments().size()) {
+      const auto &segment = lane->segments()[i];
+      const double next_accumulate_s = accumulate_s + segment.length();
+      if (start_s > accumulate_s && start_s < next_accumulate_s) { // 封装段起点waypoint
+        points->emplace_back( segment.start() + segment.unit_direction() * (start_s - accumulate_s), lane->headings()[i], LaneWaypoint(lane, start_s));
+      }
+      if (end_s > accumulate_s && end_s < next_accumulate_s) {     // 封装段终点waypoint
+        points->emplace_back( segment.start() + segment.unit_direction() * (end_s - accumulate_s), lane->headings()[i], LaneWaypoint(lane, end_s));
+      }
+      accumulate_s = next_accumulate_s;
+    }
+    if (accumulate_s > end_s) {
+      break;
+    }
+  }
+}
+```
+可以看到，除了原本lane中的point封装成MapPathPoint，还加入了段起点和终点作为新的MapPathPoint，所以可能在接壤或者开始或者结尾部分，某些点的距离过近，PncMap::CreatePathFromLaneSegments函数中使用RemoveDuplicates(&points)完成去冗余点功能。
+
+**所以这里指出一个错误: 上图中的LaneSegment应该改成LaneSegment2d!**
+
+### B. 离散LaneSegment2d && 重构RouteSegment的LaneSegment
+
+在上步骤"A. RouteSegments离散化MapPathPoint"中，已经将原始粗糙的RouteSegments离散化为一个个MapPathPoint，这一步就将这些MapPathPoint两两重组成一个个新LaneSegment2d.
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/generate_path_3.png)
+
+重组过程如上图，这部分由Path::InitPoints和Path::InitLaneSegments函数完成。
+
+```c++
+/// file in apollo/modules/map/pnc_map/path.cc
+void Path::InitPoints() {
+  num_points_ = static_cast<int>(path_points_.size());
+  ...
+  for (int i = 0; i < num_points_; ++i) {
+    accumulated_s_.push_back(s);
+    Vec2d heading;
+    if (i + 1 >= num_points_) {
+      heading = path_points_[i] - path_points_[i - 1];
+    } else {              
+      segments_.emplace_back(path_points_[i], path_points_[i + 1]);  // MapPathPoint两两生成一个LaneSegment2d
+      heading = path_points_[i + 1] - path_points_[i];               // LaneSegment2d的方向，段终点-段起点
+      s += heading.Length();
+    }
+    heading.Normalize();          // 方向正则，长度归一
+    unit_directions_.push_back(heading);
+  }
+  ...
+}
+```
+
+同时代码还重构了原本的RouteSegment形式的LaneSegment，上述的小段由`std::vector<common::math::LineSegment2d> segments_`存储；而重构RouteSegment由`std::vector<LaneSegment> lane_segments_`保存，不要搞混淆。一个是LaneSegment2d，一个是LaneSegment。
+
+下图是重构LaneSegment的代码，与LaneSegment2d其实很相似，就多了一个段拼接(Join函数)的功能：对那些同一车道，相邻的段进行合并。如上图LaneSegment2d_1-6可以合并成第一个的LaneSegment，LaneSegment2d_7-10可以合并成第二个LaneSegment。
+
+```
+/// file in apollo/modules/map/pnc_map/path.cc
+void Path::InitLaneSegments() {
+  if (lane_segments_.empty()) {
+    for (int i = 0; i + 1 < num_points_; ++i) {
+      LaneSegment lane_segment;      
+      // FindLaneSegment是查询首尾两个点是否在同一个段中，如上图的紫色和蓝色交接两个点，不能组成一个段(因为lane_id不一致)。
+      if (FindLaneSegment(path_points_[i], path_points_[i + 1], &lane_segment)) { 
+        lane_segments_.push_back(lane_segment);
+      }
+    }
+  }
+  // 相同车道的相邻段合并
+  LaneSegment::Join(&lane_segments_);
+}
+
+void LaneSegment::Join(std::vector<LaneSegment>* segments) {
+  constexpr double kSegmentDelta = 0.5;
+  std::size_t k = 0;  // k表示合并后段的数量，初始化0，合并一次加1
+  std::size_t i = 0;  // i表示原始段集合中的索引，初始化0，访问过程不能超过段的最大索引
+  while (i < segments->size()) {
+    std::size_t j = i;
+    // 查找车道id相同的连续的段，最终一个合并的大段，索引从i到j的j-i+1个段
+    // LaneSegment 1-6合并；LaneSegment 7-10合并
+    while (j + 1 < segments->size() && segments->at(i).lane == segments->at(j + 1).lane) {  
+      ++j;
+    }
+    auto& segment_k = segments->at(k);                 // 生成新的段, 并且修改起始累积距离，结束累积距离
+    segment_k.lane = segments->at(i).lane;
+    segment_k.start_s = segments->at(i).start_s;       // 合并后的段，起始累积距离为首段的start_s
+    segment_k.end_s = segments->at(j).end_s;           // 合并后的段，结束累计距离为末段的end_s
+    if (segment_k.start_s < kSegmentDelta) {
+      segment_k.start_s = 0.0;
+    }
+    if (segment_k.end_s + kSegmentDelta >= segment_k.lane->total_length()) {
+      segment_k.end_s = segment_k.lane->total_length();
+    }
+    i = j + 1;
+    ++k;
+  }
+  segments->resize(k);
+  segments->shrink_to_fit();  // release memory
+}
+```
+
+最终重构与和合并后的LaneSegment有两个，如上图的LaneSegment(final)1和2，其中LaneSegment(final)1由原先的LaneSegment1-6合并完成；LaneSegment(final)2由原先的LaneSegment7-10合并完成。
+
+最后做一个总结，LaneSegment2d和LaneSegment区别
+
+1. LaneSegment2d包含起始点start_pos，结束点end_pos，可以由此计算段方向(end_pos - start_pos)。LaneSegment2d一般是小段。
+2. LaneSegment主要存储段的起始点累积距离start_s，结束点累积距离end_s，没有段的坐标信息。LaneSegment可以存储任意长度的车道。
+
+所以前者适合用来存储底层车道的数据结构；后者适合存储车道的大致道路区间信息，仅仅长度范围。
+
+
+###C. 道路采样点生成
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/generate_path_4.png)
+
+跟HD Map中Lane的构建一样，segments_已经保存了这个RouteSegments的各个段，接下来的工作就是等距离采样(累积距离)，离散化保存这条路径，等间隔采样的频率是每`kSampleDistance`采样一个点，默认0.25m。
+
+这部分工作由Path::InitPointIndex和Path::InitWidth完成。代码比较多，但是不是特别难，这里从函数讲解一下计算过程
+
+1. Path::InitPointIndex函数计算每个采样点的上界MapPathPoint
+
+```
+/// file in apollo/modules/map/pnc_map/path.cc
+void Path::InitPointIndex() {
+  last_point_index_.clear();
+  last_point_index_.reserve(num_sample_points_);
+  double s = 0.0;
+  int last_index = 0;
+  // num_sample_points_ = length_ / kSampleDistance + 1
+  for (int i = 0; i < num_sample_points_; ++i) {
+  	// 向后遍历，得到采样点(对应累积距离为s)的上界MapPathPoint
+    while (last_index + 1 < num_points_ && accumulated_s_[last_index + 1] <= s) {  
+      ++last_index;
+    }
+    last_point_index_.push_back(last_index);
+    s += kSampleDistance;  // 下一个采样点的累积距离，加上0.25
+  }
+}
+```
+
+2. Path::InitWidth可以根据采样点的累计距离，上界和下届MapPathPoint进行插值，使用`GetSmoothPoint`平滑插值后得到采样点的坐标，并且设置每个采样点的左右车道线距离
+
+```c++
+/// file in apollo/modules/map/pnc_map/path.cc
+void Path::InitWidth() {
+  left_width_.clear();
+  left_width_.reserve(num_sample_points_);
+  right_width_.clear();
+  right_width_.reserve(num_sample_points_);
+
+  double s = 0;
+  for (int i = 0; i < num_sample_points_; ++i) {
+    const MapPathPoint point = GetSmoothPoint(s);          // 利用上下界MapPathPoint插值得到采样点的坐标
+    if (point.lane_waypoints().empty()) {
+      left_width_.push_back(FLAGS_default_lane_width / 2.0);
+      right_width_.push_back(FLAGS_default_lane_width / 2.0);
+    } else {
+      const LaneWaypoint waypoint = point.lane_waypoints()[0];
+      CHECK_NOTNULL(waypoint.lane);
+      double left_width = 0.0;
+      double right_width = 0.0;
+      waypoint.lane->GetWidth(waypoint.s, &left_width, &right_width);
+      left_width_.push_back(left_width - waypoint.l);
+      right_width_.push_back(right_width + waypoint.l);
+    }
+    s += kSampleDistance;
+  }
+}
+```
+
+平滑GetSmoothPoint过程的计算方法如下：
+
+- 计算采样点下界
+
+Step 1. 可以计算大致的采样点坐标
+
+`sample_id = static_cast<int>(s / kSampleDistance);`
+
+Step 2. 计算理论下界 
+
+`low = last_point_index_[sample_id];`
+
+Step 3. 计算理论上界
+
+```c++
+high = (next_sample_id < num_sample_points_
+                  ? std::min(num_points_, last_point_index_[next_sample_id] + 1)
+                  : num_points_);
+```
+
+Step 4. 二分法计算真实下界以及与下届的累计距离差
+
+```c++
+  while (low + 1 < high) {
+    const int mid = (low + high) / 2;
+    if (accumulated_s_[mid] <= s) {
+      low = mid;
+    } else {
+      high = mid;
+    }
+  }
+  return {low, s - accumulated_s_[low]};
+```
+
+- 插值平滑
+
+```c++
+MapPathPoint Path::GetSmoothPoint(const InterpolatedIndex& index) const {
+  const MapPathPoint& ref_point = path_points_[index.id];               // 采样点下界point
+  if (std::abs(index.offset) > kMathEpsilon) {
+    const Vec2d delta = unit_directions_[index.id] * index.offset;      // 插值平滑的位移
+    MapPathPoint point({ref_point.x() + delta.x(), ref_point.y() + delta.y()}, ref_point.heading());  //采样点坐标
+    // 采样点LaneWaypoint设置
+    ...
+    return point;
+  } else {
+    return ref_point;
+  }
+}
+```
+
+###D. 覆盖区域设置
+
+最后一步就是对RouteSegment产生的路径上的覆盖区域，如交叉口车道、停车区域、人行横道等区域加入到这条路径中，方便后续做决策。
+
+```c++
+void Path::InitOverlaps() {
+  GetAllOverlaps(std::bind(&LaneInfo::cross_lanes, _1), &lane_overlaps_);
+  GetAllOverlaps(std::bind(&LaneInfo::signals, _1), &signal_overlaps_);
+  GetAllOverlaps(std::bind(&LaneInfo::yield_signs, _1), &yield_sign_overlaps_);
+  GetAllOverlaps(std::bind(&LaneInfo::stop_signs, _1), &stop_sign_overlaps_);
+  GetAllOverlaps(std::bind(&LaneInfo::crosswalks, _1), &crosswalk_overlaps_);
+  GetAllOverlaps(std::bind(&LaneInfo::junctions, _1), &junction_overlaps_);
+  GetAllOverlaps(std::bind(&LaneInfo::clear_areas, _1), &clear_area_overlaps_);
+  GetAllOverlaps(std::bind(&LaneInfo::speed_bumps, _1), &speed_bump_overlaps_);
+}
+```
+
+可以看到所有类型的覆盖区域，一个路段存在多个覆盖区域，每个覆盖区域又存在多个物体，所以访问覆盖区域中的物体，代码需要3个循环。
+
+```c++
+void Path::GetAllOverlaps(GetOverlapFromLaneFunc GetOverlaps_from_lane,
+                          std::vector<PathOverlap>* const overlaps) const {
+
+  // Step 1. 计算所有的覆盖，保存到overlaps_by_id
+  overlaps->clear();
+  std::unordered_map<std::string, std::vector<std::pair<double, double>>> overlaps_by_id;
+  double s = 0.0;
+  // 循环1. 对每个LaneSegment分别做覆盖检测
+  for (const auto& lane_segment : lane_segments_) {         
+    if (lane_segment.lane == nullptr) {
+      continue;
+    }
+    // 循环2. 每个LaneSegment中有多个覆盖区域，分别做检测
+    for (const auto& overlap : GetOverlaps_from_lane(*(lane_segment.lane))) {
+      const auto& overlap_info = overlap->GetObjectOverlapInfo(lane_segment.lane->id()); // 获得覆盖区域信息
+      if (overlap_info == nullptr) {
+        continue;
+      }
+
+      const auto& lane_overlap_info = overlap_info->lane_overlap_info();
+      if (lane_overlap_info.start_s() < lane_segment.end_s && lane_overlap_info.end_s() > lane_segment.start_s) {
+      	// 这里adjusted_start_s和adjusted_end_s相对于第一个LaneSegment的start_s来计算的
+        const double ref_s = s - lane_segment.start_s;
+        const double adjusted_start_s = std::max(lane_overlap_info.start_s(), lane_segment.start_s) + ref_s;
+        const double adjusted_end_s = std::min(lane_overlap_info.end_s(), lane_segment.end_s) + ref_s;
+        // 循环3. 每个覆盖区域有多类物体，循环访问
+        for (const auto& object : overlap->overlap().object()) {
+          if (object.id().id() != lane_segment.lane->id().id()) {
+          	// overlaps_by_id详细记录了每个物体占据的道路段，哪里开始到哪里结束
+            overlaps_by_id[object.id().id()].emplace_back(adjusted_start_s, adjusted_end_s);
+          }
+        }
+      }
+    }
+    s += lane_segment.end_s - lane_segment.start_s;
+  }
+  
+  // Step 2. 覆盖合并，保存到函数参数overlaps中
+  // E.G. overlaps_by_id的人行横道中两块区域可能可以相连
+  for (auto& overlaps_one_object : overlaps_by_id) {
+    const std::string& object_id = overlaps_one_object.first;
+    auto& segments = overlaps_one_object.second;
+    std::sort(segments.begin(), segments.end());
+    const double kMinOverlapDistanceGap = 1.5;  // in meters.
+    for (const auto& segment : segments) {
+      // 检查两个覆盖物体id相同(类型一样)，end_s和start_s在一定阈值之内，就直接合并成一块、
+      if (!overlaps->empty() && overlaps->back().object_id == object_id &&
+          segment.first - overlaps->back().end_s <= kMinOverlapDistanceGap) {
+        overlaps->back().end_s = std::max(overlaps->back().end_s, segment.second);
+      } else {
+        overlaps->emplace_back(object_id, segment.first, segment.second);
+      }
+    }
+  }
+  // 覆盖物体根据离主车距离由近及远排序
+  std::sort(overlaps->begin(), overlaps->end(),
+            [](const PathOverlap& overlap1, const PathOverlap& overlap2) {
+              return overlap1.start_s < overlap2.start_s;
+            });
 }
 ```

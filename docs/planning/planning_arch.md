@@ -16,9 +16,9 @@ Planning模块组件分为以下部分：
 
 pnc map其实和高精地图hd map没有关系，后者是专门为规划与控制模块设计的库函数，在hd map层次之上，负责一些地图相关信息的处理。例如查询车辆可能的形式路径(list<RouteSegments>)
 
-3. 基准线提供器: Reference Line Provider
+3. 指引线提供器: Reference Line Provider
 
-基准线提供器其实就是路径的生成，对于一系列的RouteSegments进行平滑与拼接，最终得到无人车形式的基准线，也就是行驶路径。
+指引线提供器其实就是路径的生成，对于一系列的RouteSegments进行平滑与拼接，最终得到无人车行驶的指引线，也就是行驶路径。
 
 
 
@@ -98,4 +98,3 @@ RoadSegment类型包含了repeated Passage，这意味着，一个RoadSegment中
 
 最终的可视化结果如下图所示
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/routing_result.png)
