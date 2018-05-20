@@ -1076,8 +1076,8 @@ void Path::GetAllOverlaps(GetOverlapFromLaneFunc GetOverlaps_from_lane,
 | `std::vector<double> left_width_` | 每个采样点距离左车道边界距离，长度为num_sample_points_ |
 | `std::vector<double> right_width_` | 每个采样点距离右车道边界距离，长度为num_sample_points_ |
 | `std::vector<PathOverlap> lane_overlaps_` | 车道交叉覆盖区域，元素形式{id, start_s, end_s}，由start_s从小到大排列，即距离主车最近的覆盖区域最靠前存储 |
-| `std::vector<PathOverlap> yield_sign_overlaps_` | 车道交叉覆盖区域，元素形式{id, start_s, end_s}，由start_s从小到大排列，即距离主车最近的覆盖区域最靠前存储 |
-| `std::vector<PathOverlap> stop_sign_overlaps_` | 停车覆盖区域，元素形式{id, start_s, end_s}，由start_s从小到大排列，即距离主车最近的覆盖区域最靠前存储 |
+| `std::vector<PathOverlap> yield_sign_overlaps_` | 让行区覆盖区域，元素形式{id, start_s, end_s}，由start_s从小到大排列，即距离主车最近的覆盖区域最靠前存储 |
+| `std::vector<PathOverlap> stop_sign_overlaps_` | 停车等待覆盖区域，元素形式{id, start_s, end_s}，由start_s从小到大排列，即距离主车最近的覆盖区域最靠前存储 |
 | `std::vector<PathOverlap> crosswalk_overlaps_` | 人行道覆盖区域，元素形式{id, start_s, end_s}，由start_s从小到大排列，即距离主车最近的覆盖区域最靠前存储 |
 | `std::vector<PathOverlap> parking_space_overlaps_`| 停车区域覆盖区域，元素形式{id, start_s, end_s}，由start_s从小到大排列，即距离主车最近的覆盖区域最靠前存储 |
 | `std::vector<PathOverlap> junction_overlaps_` | 路口覆盖区域，元素形式{id, start_s, end_s}，由start_s从小到大排列，即距离主车最近的覆盖区域最靠前存储 |
