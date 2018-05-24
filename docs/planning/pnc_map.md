@@ -867,9 +867,9 @@ void LaneSegment::Join(std::vector<LaneSegment>* segments) {
 
 所以前者适合用来存储底层车道的数据结构；后者适合存储车道的大致道路区间信息，仅仅长度范围。
 
-<div id="sample"></div>
-	
 ###C. 道路采样点生成
+
+<div id="sample"></div>
 
 ![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/generate_path_4.png)
 
