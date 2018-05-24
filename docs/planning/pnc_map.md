@@ -979,7 +979,7 @@ MapPathPoint Path::GetSmoothPoint(const InterpolatedIndex& index) const {
 }
 ```
 
-###D. 覆盖区域设置
+### D. 覆盖区域设置
 
 最后一步就是对RouteSegment产生的路径上的覆盖区域，如交叉口车道、停车区域、人行横道等区域加入到这条路径中，方便后续做决策。
 
