@@ -6,7 +6,7 @@
 
 1. 路径点采样与轨迹点矫正
 
-2. knots分段与二次规划
+2. knots分段与二次规划进行参考线平滑
 
 ## 路径点采样与轨迹点矫正
 
@@ -88,12 +88,63 @@ if (!(waypoint.lane->lane().left_boundary().virtual_() ||
 }
 ```
 
-这部分代码可以从下面两张图理解
+这部分代码可以从下面图中理解
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/correct_right.png)
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/correct_1.png)
 
-靠右行驶时，shifted_left_width的计算和后期矫正的过程
+从代码可以看到，如果官方代码没有错误，那么：
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/correct_left.png)
+- 当driving_side为RIGHT时
 
-靠左行驶时，shifted_left_width的计算和后期矫正的过程
+`m = adc_half_width + adc_width * smoother_config_.wide_lane_shift_remain_factor()`计算矫正后车辆与左边界距离
+
+- 当driving_side为LEFT时
+
+`m = adc_half_width + adc_width * smoother_config_.wide_lane_shift_remain_factor()`计算矫正后车辆与右边界距离
+
+这样的方式在车道宽度差异比较大的时候，车联靠边行驶，距离边界的距离(total_width - m)，这个距离不好控制。更不如使用一种更好的方法，同样是计算m，但是m的意义是距离最近边界线的距离，即靠边行驶与边界的距离，这个距离相对来说就比较好控制。只需要做一个更简单的改动，将上述代码的if-else判断条件交换一下即可，wide_lane_shift_remain_factor可以设置小于0.5的值。保证车辆边界与车到边界有一定距离(间隙)。
+
+第二部分矫正是根据左右边界线是否是道路边界，如果车道左边界是道路边界线，那么shifted_left_width需要加上一个边界的缓冲距离curb_shift，默认0.2m，反之就是减去缓冲边界距离。
+
+```c++
+// shift away from curb boundary
+auto left_type = hdmap::LeftBoundaryType(waypoint);
+if (left_type == hdmap::LaneBoundaryType::CURB) {
+  shifted_left_width += smoother_config_.curb_shift();
+}
+auto right_type = hdmap::RightBoundaryType(waypoint);
+if (right_type == hdmap::LaneBoundaryType::CURB) {
+  shifted_left_width -= smoother_config_.curb_shift();
+}
+```
+
+最后矫正得到的平移距离就是shifted_left_width，如何根据这个平移距离求出车辆在**世界坐标系**中的矫正位置?
+
+转换方法如下图，一目了然。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/correct_2.png)
+
+```c++
+ref_point += left_vec * (left_width - shifted_left_width);
+auto shifted_right_width = total_width - shifted_left_width;
+anchor.path_point = ref_point.ToPathPoint(s);
+double effective_width = std::min(shifted_left_width, shifted_right_width) -
+                           adc_half_width - FLAGS_reference_line_lateral_buffer;
+anchor.lateral_bound = std::max(smoother_config_.lateral_boundary_bound(), effective_width);
+anchor.longitudinal_bound = smoother_config_.longitudinal_boundary_bound();
+```
+
+最后当使用二次规划来拟合轨迹点时，需要设置该点的约束，`lateral_bound`指的是预测的x值需要在ref_point的L轴的lateral_bound左右领域内，`longitudinal_bound`是预测的y值需要在ref_point的F轴的longitudinal_bound前后领域内
+
+
+## knots分段与二次规划进行参考线平滑
+
+通过第一阶段路径点采样与轨迹点矫正，可以得到这条路径的anchor_point集合，里面是若干矫正过后的轨迹点，但还是离散形式。这个阶段我们需要对上述离散轨迹点进行多项式拟合。这部分内容也可以参考[Apollo参考线平滑器](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/reference_line_smoother.md)。官方文档介绍的偏简单，在这里将从代码入手介绍一下参考线平滑过程。
+
+这个过程目的是得到一条平滑的参考线，也就是运行轨迹，具体的做法是使用knots分段与QP二次规划。主要的思路是，将anchor_point分成n组，每组用一个多项式函数去拟合，可以得到n个多项式函数。
+
+函数的输入和输出又是什么？我们现在只anchor_point中每个点的车道累积距离差s，以及世界系坐标(x,y)。想要拟合出轨迹曲线，只能是累积距离s作为自变量，世界系坐标作为应变量。计算函数为：
+
+$ x = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 +a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $
+
+$ y = g_i(s) = b_{i0} + b_{i1}s + b_{i2}s^2 +b_{i3}s^3 + b_{i4}s^4 + b_{i5}s^5 $
