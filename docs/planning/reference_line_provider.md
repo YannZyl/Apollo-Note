@@ -148,3 +148,49 @@ anchor.longitudinal_bound = smoother_config_.longitudinal_boundary_bound();
 $ x = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 +a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $
 
 $ y = g_i(s) = b_{i0} + b_{i1}s + b_{i2}s^2 +b_{i3}s^3 + b_{i4}s^4 + b_{i5}s^5 $
+
+在这里是分别对x和y用多项式函数拟合，函数的参数a和b的下标i表示哪一个段(两个knots之间的anchor point)
+
+### A. 预处理：如何划分段，或者说设置knots？
+
+简单，anchor point是对原始Path进行采样，采样间隔为`smoother_config_.max_constraint_interval()`，默认5m一个点。knots的采样其实也是相似的，采样间隔为`config_.qp_spline().max_spline_length()`，默认25m：
+
+```c++
+uint32_t num_spline = std::max(1u, static_cast<uint32_t>(length / config_.qp_spline().max_spline_length() + 0.5));
+for (std::uint32_t i = 0; i <= num_spline; ++i) {
+  t_knots_.push_back(i * 1.0);
+}
+```
+
+最后得到的knots节点有num_spline+1个。得到了所有的knots，也就意味着可到了所有的段，很明显这里就需要拟合num_spline个段，每个段有x和y两个多项式函数。
+
+此外，还需要对anchor_point的自变量s做处理，本来s是从0到length_递增，现进行如下处理:
+
+```c++
+const double scale = (anchor_points_.back().path_point.s() -
+                        anchor_points_.front().path_point.s()) /
+                       (t_knots_.back() - t_knots_.front());
+std::vector<double> evaluated_t;
+for (const auto& point : anchor_points_) {
+  evaluated_t.emplace_back(point.path_point.s() / scale);
+}
+```
+
+不难理解，就是将自变量s从[0,length_]区间按比例映射到[0,num_spline]区间，这样每个段内anchor point的s都属于[a,a+1]内，如果在减去knots[a]那么所有自变量的取值范围就是[0,1]，事实上代码中也是这样做的。
+
+同时还需要对应变量(x,y)做处理，处理方法如下
+
+```c++
+for (const auto& point : anchor_points_) {
+  const auto& path_point = point.path_point;
+  headings.push_back(path_point.theta());
+  longitudinal_bound.push_back(point.longitudinal_bound);
+  lateral_bound.push_back(point.lateral_bound);
+  xy_points.emplace_back(path_point.x() - ref_x_, path_point.y() - ref_y_);
+}
+```
+
+可以看到x和y都需要减去Path第一个点的世界坐标系坐标，说白了n个(num_spline)函数的坐标原点是Path的第一个点。
+
+### B. 如何设置约束条件？
+
