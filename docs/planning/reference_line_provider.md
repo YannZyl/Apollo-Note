@@ -682,7 +682,7 @@ $$ Pk_{ij} = Ds_3\[i\] * Ds_3\[j\] = i\*(i-1)\*(i-2)s^{i-3} * j\*(j-1)\*(j-2)s^{
 那么对于这个选一项积分，可以得到：
 
 $$
-\int\limits_{0}^{t_k} Pk_{ij} dt = \int\limits_{0}^{t_k} cs^{i+j-6} dt = \left. \frac{c}{i+j-5}s^{i+j-5} \right| \_{s=t_k}
+\int\limits_{0}^{t_k} Pk_{ij} dt = \int\limits_{0}^{t_k} cs^{i+j-6} dt = \left. \frac{c}{i+j-5}s^{i+j-5} \right| \_{s=t_k} - \left. \frac{c}{i+j-5}s^{i+j-5} \right| \_{s=0} = \left. \frac{c}{i+j-5}s^{i+j-5} \right| \_{s=t_k}
 $$
 
 上述公式需要满足条件: **i, j必须都大于等于3**
