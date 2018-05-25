@@ -208,7 +208,7 @@ for (const auto& point : anchor_points_) {
 
 - 预测的x'和y'需要保证在真实x和y的L轴lateral_bound、F轴longitudinal_bound领域内
 - 第一个anchor point的heading和函数的一阶导方向需要一致，大小可以不一致，但是方向必需一致！
-- x和y的n段函数之间，两两接壤部分应该是平滑的，两个函数值、一阶导、二阶导必须一致。
+- x和y的n段函数之间，两两接壤部分应该是平滑的，两个函数值(位置)、一阶导(速度)、二阶导(加速度)必须一致。
 
 #### B.1 边界约束
 
