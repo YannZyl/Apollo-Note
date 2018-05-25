@@ -631,22 +631,26 @@ $$ B = [b_{i0}, b_{i1}, b_{i2}, b_{i3}, b_{i4}, b_{i5}] $$
 
 <p>
 $$
-cost = cost_x + cost_y
+cost = 
 \sum_{i=1}^{n} 
 \Big(
-\int\limits_{0}^{t_i} (Ds_3A)^T(Ds_3A))(t) dt 
-+ \int\limits_{0}^{t_i} (Ds_3B)^T(Ds_3B)(t) dt 
+\int\limits_{0}^{t_i} (Ds_3A)^T(Ds_3A) dt 
++ \int\limits_{0}^{t_i} (Ds_3B)^T(Ds_3B) dt 
 \Big)
 $$
 </p>
 
 <p>
 $$
-cost = cost_x + cost_y
+cost = 
 \sum_{i=1}^{n} 
 \Big(
-\int\limits_{0}^{t_i} A^TDs_3^TDs_3A)(t) dt 
-+ \int\limits_{0}^{t_i} B^TDs_3^TDs_3B(t) dt 
+\int\limits_{0}^{t_i} A^TDs_3^TDs_3A dt 
++ \int\limits_{0}^{t_i} B^TDs_3^TDs_3B dt 
 \Big)
 $$
 </p>
+
+接下来的难点就是如何求解 $ \int\limits_{0}^{t_i} A^TDs_3^TDs_3A)(t) dt $， 等价于求解$ A^T\int\limits_{0}^{t_i} Ds_3^TDs_3 dtA $
+
+令$P = TDs_3^TDs_3 $ 可以思考一下
