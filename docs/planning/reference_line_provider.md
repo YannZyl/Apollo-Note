@@ -581,4 +581,11 @@ bool Spline2dConstraint::AddSecondDerivativeSmoothConstraint() {
 
 由[Apollo参考线平滑器](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/reference_line_smoother.md)可以看到Apollo使用的cost函数:
 
-$$ \int_0^s_i {(f_i^{(3)})^2(s) \,{\rm d}s + g_i^{(3)})^2(s) \,{\rm d}s } $$
+$$
+cost = 
+\sum_{i=1}^{n} 
+\Big(
+\int\limits_{0}^{t_i} (f_i''')^2(t) dt 
++ \int\limits_{0}^{t_i} (g_i''')^2(t) dt 
+\Big)
+$$
