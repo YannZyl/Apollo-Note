@@ -145,9 +145,9 @@ anchor.longitudinal_bound = smoother_config_.longitudinal_boundary_bound();
 
 函数的输入和输出又是什么？我们现在只anchor_point中每个点的车道累积距离差s，以及世界系坐标(x,y)。想要拟合出轨迹曲线，只能是累积距离s作为自变量，世界系坐标作为应变量。计算函数为：
 
-$ x = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 +a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $
+$$ x = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 +a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $$
 
-$ y = g_i(s) = b_{i0} + b_{i1}s + b_{i2}s^2 +b_{i3}s^3 + b_{i4}s^4 + b_{i5}s^5 $
+$$ y = g_i(s) = b_{i0} + b_{i1}s + b_{i2}s^2 +b_{i3}s^3 + b_{i4}s^4 + b_{i5}s^5 $$
 
 在这里是分别对x和y用多项式函数拟合，函数的参数a和b的下标i表示哪一个段(两个knots之间的anchor point)
 
@@ -224,9 +224,9 @@ bool QpSplineReferenceLineSmoother::AddConstraint() {
 
 每个anchor point相对第一个点的相对参考系坐标为(x,y)，方向为heading。而该点坐在的段拟合出来的相对参考系坐标为(x',y')，坐标的计算方式为:
 
-$ x' = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 +a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $
+$$ x' = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 +a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $$
 
-$ y' = g_i(s) = b_{i0} + b_{i1}s + b_{i2}s^2 +b_{i3}s^3 + b_{i4}s^4 + b_{i5}s^5 $
+$$ y' = g_i(s) = b_{i0} + b_{i1}s + b_{i2}s^2 +b_{i3}s^3 + b_{i4}s^4 + b_{i5}s^5 $$
 
 其中i是anchor point所在的knots段，i=1,2,...,n(n=num_spline)
 
@@ -236,7 +236,7 @@ $ y' = g_i(s) = b_{i0} + b_{i1}s + b_{i2}s^2 +b_{i3}s^3 + b_{i4}s^4 + b_{i5}s^5 
 
 如上图，实际情况下需要满足拟合坐标(x',y')在真实坐标(x,y)的领域内，真实点的投影计算方法比较简单，首先坐标在侧方L轴上的投影(天蓝色星星)，投影点到原点的距离，也就是侧方距离计算方式为：
 
-$ x_{p,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x, y) $
+$$ x_{p,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x, y) $$
 
 注意上述公式·为内积操作。这部分对应的代码为：
 
@@ -254,7 +254,7 @@ double Spline2dConstraint::SignDistance(const Vec2d& xy_point, const double angl
 
 真实点坐标在前方F轴上的投影(大红色星星)，投影点到原点的距离，也就是前方距离计算方式为：
 
-$ y_{p,longi} = (cos(\theta), sin(\theta))·(x, y) $
+$$ y_{p,longi} = (cos(\theta), sin(\theta))·(x, y) $$
 
 注意上述公式·为内积操作。对应的代码为:
 
@@ -268,17 +268,17 @@ const double d_longitudinal = SignDistance(ref_point[i], angle[i] - M_PI / 2.0);
 
 根据多项式函数，可以简化出函数预测点(x',y')的计算方式为：
 
-$ x = SA $
+$$ x = SA $$
 
-$ y = SB $
+$$ y = SB $$
 
 其中:
 
-$ S = [1, s, s^2, s^3, s^4, s^5] $
+$$ S = [1, s, s^2, s^3, s^4, s^5] $$
 
-$ A = [a_{i0} ,a_{i1}, a_{i2}, a_{i3}, a_{i4}, a_{i5}]^T $
+$$ A = [a_{i0} ,a_{i1}, a_{i2}, a_{i3}, a_{i4}, a_{i5}]^T $$
 
-$ B = [b_{i0} ,b_{i1}, b_{i2}, b_{i3}, b_{i4}, b_{i5}]^T $
+$$ B = [b_{i0} ,b_{i1}, b_{i2}, b_{i3}, b_{i4}, b_{i5}]^T $$
 
 接下去我们从代码中验证一下正确性。
 
@@ -316,19 +316,23 @@ std::vector<double> Spline2dConstraint::AffineCoef(const double angle, const dou
 
 这部分`longi_coef`和`longitudinal_coef`也比较简单，一句话描述：
 
-$ longicoef = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $
+$$ longicoef = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $$
 
-$ longitudinalcoef = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S] = [cos(\theta)S, sin(\theta)S] $
+$$ longitudinalcoef = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S] = [cos(\theta)S, sin(\theta)S] $$
 
 两个系数分别是在L轴和F轴上的投影系数。但是longi_coef名字可能改成lateral_coef更合适。最后可以根据这两个值求解在F和L轴上的投影。
 
-$ x_{q,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x', y') = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(SA, SB) $
+$$ x_{q,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x', y') = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(SA, SB) $$
 
-即$ x_{q,later} = [-sin(\theta)S, cos(\theta)S]·(A, B) =  longicoef · (A, B)$
+即
 
-$ y_{q,longi} = (cos(\theta), sin(\theta))·(x', y') = (cos(\theta), sin(\theta))·(SA, SB) $
+$$ x_{q,later} = [-sin(\theta)S, cos(\theta)S]·(A, B) =  longicoef · (A, B)$$
 
-即$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  longitudinalcoef · (A, B)$
+$$ y_{q,longi} = (cos(\theta), sin(\theta))·(x', y') = (cos(\theta), sin(\theta))·(SA, SB) $$
+
+即
+
+$$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  longitudinalcoef · (A, B)$$
 
 3. 约束条件设置
 
@@ -497,23 +501,23 @@ y_sign = std::sin(angle)
 
 所以从上述可以得知，平滑约束共6个不等式。
 
-$ f_i(knots[i+1].s-knots[i].s) - f_{i+1}(0) = 0 $
+$$ f_i(knots[i+1].s-knots[i].s) - f_{i+1}(0) = 0 $$
 
-$ g_i(knots[i+1].s-knots[i].s) - g_{i+1}(0) = 0 $
+$$ g_i(knots[i+1].s-knots[i].s) - g_{i+1}(0) = 0 $$
 
-$ f^{(1)}\_i(knots[i+1].s-knots[i].s) - f^{(1)}\_{i+1}(0) = 0 $
+$$ f^{(1)}\_i(knots[i+1].s-knots[i].s) - f^{(1)}\_{i+1}(0) = 0 $$
 
-$ f^{(2)}\_i(knots[i+1].s-knots[i].s) - f^{(2)}\_{i+1}(0) = 0 $
+$$ f^{(2)}\_i(knots[i+1].s-knots[i].s) - f^{(2)}\_{i+1}(0) = 0 $$
 
-$ g^{(1)}\_i(knots[i+1].s-knots[i].s) - g^{(1)}\_{i+1}(0) = 0 $
+$$ g^{(1)}\_i(knots[i+1].s-knots[i].s) - g^{(1)}\_{i+1}(0) = 0 $$
 
-$ g^{(2)}\_i(knots[i+1].s-knots[i].s) - g^{(2)}\_{i+1}(0) = 0 $
+$$ g^{(2)}\_i(knots[i+1].s-knots[i].s) - g^{(2)}\_{i+1}(0) = 0 $$
 
 以x的多项式拟合函数f为例，函数的一阶导和二阶导分别为
 
-$ x' = f^{(1)}\_i(s) = 0 + a_{i1} + 2a_{i2}s + 3a_{i3}s^2 + 4a_{i4}s^3 + 5a_{i5}s^4 $
+$$ x' = f^{(1)}\_i(s) = 0 + a_{i1} + 2a_{i2}s + 3a_{i3}s^2 + 4a_{i4}s^3 + 5a_{i5}s^4 $$
 
-$ x'' = f^{(2)}\_i(s) = 0 + 0 + 2a_{i2} + 6a_{i3}s + 12a_{i4}s^2 + 20a_{i5}s^3 $
+$$ x'' = f^{(2)}\_i(s) = 0 + 0 + 2a_{i2} + 6a_{i3}s + 12a_{i4}s^2 + 20a_{i5}s^3 $$
 
 函数值系数: $ S = [1, s, s^2, s^3, s^4, s^5] $ 
 
@@ -523,17 +527,17 @@ $ x'' = f^{(2)}\_i(s) = 0 + 0 + 2a_{i2} + 6a_{i3}s + 12a_{i4}s^2 + 20a_{i5}s^3 $
 
 最终简化后的6个等式约束为：
 
-$ SA_i - [1,0,0,0,0,0]A_{i+1} = 0 $ 
+$$ SA_i - [1,0,0,0,0,0]A_{i+1} = 0 $$ 
 
-$ DsA_i - [0,1,0,0,0,0]A_{i+1} = 0 $ 
+$$ DsA_i - [0,1,0,0,0,0]A_{i+1} = 0 $$ 
 
-$ DDsA_i - [0,0,2,0,0,0]A_{i+1} = 0 $ 
+$$ DDsA_i - [0,0,2,0,0,0]A_{i+1} = 0 $$ 
 
-$ SB_i - [1,0,0,0,0,0]B_{i+1} = 0 $ 
+$$ SB_i - [1,0,0,0,0,0]B_{i+1} = 0 $$ 
 
-$ DsB_i - [0,1,0,0,0,0]B_{i+1} = 0 $ 
+$$ DsB_i - [0,1,0,0,0,0]B_{i+1} = 0 $$ 
 
-$ DDsB_i - [0,0,2,0,0,0]B_{i+1} = 0 $ 
+$$ DDsB_i - [0,0,2,0,0,0]B_{i+1} = 0 $$
 
 代码如下
 
@@ -603,15 +607,15 @@ qp_spline {
 }
 ```
 
-实际上，从代码和配置文件中可以看到，其实cost函数用了二阶导和三阶导，下面我们以二阶导和f多项式曲线为例，描述cost函数的计算过程。可知f多项式函数的0,1,2,3阶导函数分别为：
+实际上，从代码和配置文件中可以看到，其实cost函数用了二阶导和三阶导，下面我们以三阶导和第k段多项式x曲线fk为例，描述cost函数的计算过程。可知fk多项式函数的0,1,2,3阶导函数分别为：
 
-$$ x = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 + a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $$
+$$ x = f_k(s) = a_{k0} + a_{k1}s + a_{k2}s^2 + a_{k3}s^3 + a_{k4}s^4 + a_{k5}s^5 $$
 
-$$ x' = f_i^{(1)}(s) = 0 + a_{i1} + 2a_{i2}s + 3a_{i3}s^2 + 4a_{i4}s^3 + 5a_{i5}s^4 $$
+$$ x' = f_k^{(1)}(s) = 0 + a_{k1} + 2a_{k2}s + 3a_{k3}s^2 + 4a_{k4}s^3 + 5a_{k5}s^4 $$
 
-$$ x'' = f_i^{(2)}(s) = 0 + 0 + 2 + 6a_{i3}s + 12a_{i4}s^2 + 20a_{i5}s^3 $$
+$$ x'' = f_k^{(2)}(s) = 0 + 0 + 2 + 6a_{k3}s + 12a_{k4}s^2 + 20a_{k5}s^3 $$
 
-$$ x''' = f_i^{(3)}(s) = 0+ 0 + 0 + 6 + 24a_{i4}s^1 + 60a_{i5}s^2 $$
+$$ x''' = f_k^{(3)}(s) = 0+ 0 + 0 + 6 + 24a_{k4}s^1 + 60a_{k5}s^2 $$
 
 先做如下标记：
 
@@ -623,19 +627,19 @@ $$ Ds_2 = [0, 0, 2, 6s, 12s^2, 20s^3] $$
 
 $$ Ds_3 = [0, 0, 0, 6, 24s, 60s^2] $$
 
-$$ A = [a_{i0}, a_{i1}, a_{i2}, a_{i3}, a_{i4}, a_{i5}] $$
+$$ A_k = [a_{k0}, a_{k1}, a_{k2}, a_{k3}, a_{k4}, a_{k5}] $$
 
-$$ B = [b_{i0}, b_{i1}, b_{i2}, b_{i3}, b_{i4}, b_{i5}] $$
+$$ B_k = [b_{k0}, b_{k1}, b_{k2}, b_{k3}, b_{k4}, b_{k5}] $$
 
 最终cost可以变为：
 
 <p>
 $$
 cost = 
-\sum_{i=1}^{n} 
+\sum_{k=1}^{n} 
 \Big(
-\int\limits_{0}^{t_i} (Ds_3A)^T(Ds_3A) dt 
-+ \int\limits_{0}^{t_i} (Ds_3B)^T(Ds_3B) dt 
+\int\limits_{0}^{t_k} (Ds_{3,k}A_k)^T(Ds_{3,k}A_k) dt 
++ \int\limits_{0}^{t_k} (Ds_{3,k}B_k)^T(Ds_{3,k}B_k) dt 
 \Big)
 $$
 </p>
@@ -643,24 +647,177 @@ $$
 <p>
 $$
 cost = 
-\sum_{i=1}^{n} 
+\sum_{k=1}^{n} 
 \Big(
-\int\limits_{0}^{t_i} A^TDs_3^TDs_3A dt 
-+ \int\limits_{0}^{t_i} B^TDs_3^TDs_3B dt 
+\int\limits_{0}^{t_k} {A_k}^T{Ds_{3,k}}^TDs_{3,k}A_k dt 
++ \int\limits_{0}^{t_k} {B_k}^T{Ds_{3,k}}^TDs_{3,k}B_k dt 
 \Big)
 $$
 </p>
 
-接下来的难点就是如何求解 $ \int\limits_{0}^{t_i} A^TDs_3^TDs_3A dt = A^T\int\limits_{0}^{t_i} Ds_3^TDs_3 dtA$，等价于求解$ \int\limits_{0}^{t_i} Ds_3^TDs_3 dt $，这个就跟上述的约束一样，是一个系数矩阵。
+以第k段多项式函数fk为例，接下来的难点就是如何求解 $ \int\limits_{0}^{t_k} {A_k}^T{Ds_{3,k}}^TDs_3A_k dt = (A_k)^T\int\limits_{0}^{t_k} {Ds_{3,k}}^TDs_{3,k} dtA_k$，等价于求解$ \int\limits_{0}^{t_k} {Ds_{3,k}}^TDs_{3,k} dt $，这个就跟上述的约束一样，是一个系数矩阵。
 
-现令$P = TDs_3^TDs_3 $ 可以思考一下，P中的任意一个元素$P_{ij}$，他的完整计算方式为：
+现令$Pk = (Ds_{3,k})^TDs_{3,k} $ 可以思考一下，Pk中的任意一个元素$Pk_{ij}$，他的完整计算方式为：
 
-$$ P_{ij} = Ds_3\[i\] * Ds_3\[j\] = (i\*(i-1)\*i-2)s^{i-3} * (j\*(j-1)\*j-2)s^{j-3} = cs^{i+j-6} $$
+$$ Pk_{ij} = Ds_{3,k}\[i\] * Ds_{3,k}\[j\] = (i\*(i-1)\*i-2)s^{i-3} * (j\*(j-1)\*j-2)s^{j-3} = cs^{i+j-6} $$
 
-上述公式中的参数c = i\*(i-1)\*i-2)\*(j\*(j-1)\*j-2)
+上述公式中的参数 $ c = i\*(i-1)\*i-2)\*(j\*(j-1)\*j-2) $
 
 那么对于这个选一项积分，可以得到：
 
 $$
-\int\limits_{0}^{t_k} P_{ij} dt = \frac{c}{i+j-6}s^{i+j-6+1}
+\int\limits_{0}^{t_k} Pk_{ij} dt = \frac{c}{i+j-5}s^{i+j-5}
 $$
+
+上述公式需要满足条件: **i, j必须都大于等于3**
+
+所以最终的积分系数矩阵Pk可以分别成两部分：
+
+Pk = Qk(同kernel_third_order_derivative_) · Rk(同term_matrix)(**注意这里是点乘，并非矩阵乘法**)
+
+上述中`kernel_third_order_derivative_`是积分二阶导系数矩阵C，`term_matrix`是s的多项式矩阵。
+
+**积分导数系数矩阵Qk计算**
+
+1. 在三阶导系数矩阵中，每个位置元素的计算方式为：
+
+$$ C_{i,j} = \frac{i\*(i-1)\*i-2)\*(j\*(j-1)\*j-2)}{i-3+j-3+1} $$
+
+公式必须保证i和j都要大于等于3，因为低阶项(第0,1,2项)不存在3次导。
+
+```c++
+/// file in apollo/modules/planning/math/smoothing_spline/spline_seg_kernel.cc
+void SplineSegKernel::CalculateThirdOrderDerivative(const uint32_t num_params) {
+  kernel_third_order_derivative_ = Eigen::MatrixXd::Zero(num_params, num_params);
+  for (int r = 3; r < kernel_third_order_derivative_.rows(); ++r) {
+    for (int c = 3; c < kernel_third_order_derivative_.cols(); ++c) {
+      kernel_third_order_derivative_(r, c) =
+          (r * r - r) * (r - 2) * (c * c - c) * (c - 2) / (r + c - 5.0);
+    }
+  }
+}
+```
+
+从代码可以不难验证我们推理的正确性。
+
+2. 在二阶导系数矩阵中，每个位置元素的计算方式为：
+
+$$ C_{i,j} = \frac{i\*(i-1)\*j\*(j-1)}{i-2+j-2+1} $$
+
+公式必须保证i和j都要大于等于2，因为低阶项(第0,1项)不存在2次导。
+
+```c++
+/// file in apollo/modules/planning/math/smoothing_spline/spline_seg_kernel.cc
+void SplineSegKernel::CalculateSecondOrderDerivative(const uint32_t num_params) {
+  kernel_second_order_derivative_ = Eigen::MatrixXd::Zero(num_params, num_params);
+  for (int r = 2; r < kernel_second_order_derivative_.rows(); ++r) {
+    for (int c = 2; c < kernel_second_order_derivative_.cols(); ++c) {
+      kernel_second_order_derivative_(r, c) =
+          (r * r - r) * (c * c - c) / (r + c - 3.0);
+    }
+  }
+}
+```
+
+**多项式矩阵R计算**
+
+对于三阶导cost函数，原本多项式矩阵R计算为：
+
+$$ R = [0, 0, 0, 1, s, s^2]^T[0, 0, 0, 1, s, s^2] $$
+
+但是由于积分后，每个元素的多项式次数需要加一，所以最后的R为：
+
+$$ R = s · [0, 0, 0, 1, s, s^2]^T[0, 0, 0, 1, s, s^2] $$
+
+```c++
+/// file in apollo/modules/planning/math/smoothing_spline/spline_seg_kernel.cc
+void SplineSegKernel::IntegratedTermMatrix(const uint32_t num_params,
+                                           const double x,
+                                           const std::string& type,
+                                           Eigen::MatrixXd* term_matrix) const {
+  if (term_matrix->rows() != term_matrix->cols() ||
+      term_matrix->rows() != static_cast<int>(num_params)) {
+    term_matrix->resize(num_params, num_params);
+  }
+
+  std::vector<double> x_pow(2 * num_params + 1, 1.0);
+  for (uint32_t i = 1; i < 2 * num_params + 1; ++i) {
+    x_pow[i] = x_pow[i - 1] * x;
+  }
+
+  if (type == "fx") {
+    ...
+  } else if (type == "derivative") {
+    ...
+  } else if (type == "second_order") {
+    ...
+  } else {
+    for (uint32_t r = 3; r < num_params; ++r) {
+      for (uint32_t c = 3; c < num_params; ++c) {
+        (*term_matrix)(r, c) = x_pow[r + c - 5];  // 每个元素本来为 r-3+c-3，积分过后指数加1，变成r+c-5
+      }
+    }
+    (*term_matrix).block(0, 0, num_params, 3) =  Eigen::MatrixXd::Zero(num_params, 3); // 前三列置0
+    (*term_matrix).block(0, 0, 3, num_params) =  Eigen::MatrixXd::Zero(3, num_params); // 前三行置0
+  }
+}
+```
+
+代码也是一目了然，最后的cost函数等价于：
+
+<p>
+$$
+cost = 
+(\sum_{k=1}^{n} 
+\Big(
+{A_k}^T(Q_k·R_k)A_k + {B_k}^T(Q_k·R_k)B_k
+\Big)
+)
+$$
+</p>
+
+上述公式Qk·Rk是点乘，不是矩阵乘法
+
+```c++
+/// file in apollo/modules/planning/math/smoothing_spline/spline_2d_kernel.cc
+// AddNthDerivativeKernelMatrix是计算cost函数的总系数矩阵，对应上述公式中的sigma，一共n-1段函数
+// n = num_spline = t_knots_.size() - 1
+void Spline2dKernel::AddNthDerivativeKernelMatrix(const uint32_t n, const double weight) {
+  for (uint32_t i = 0; i + 1 < t_knots_.size(); ++i) {
+    const uint32_t num_params = spline_order_ + 1;
+    Eigen::MatrixXd cur_kernel =
+        SplineSegKernel::instance()->NthDerivativeKernel(
+            n, num_params, t_knots_[i + 1] - t_knots_[i]) *
+        weight;
+    kernel_matrix_.block(2 * i * num_params, 2 * i * num_params, num_params,
+                         num_params) += cur_kernel;
+    kernel_matrix_.block((2 * i + 1) * num_params, (2 * i + 1) * num_params,
+                         num_params, num_params) += cur_kernel;
+  }
+}
+
+/// file in apollo/modules/planning/math/smoothing_spline/spline_seg_kernel.cc
+// SecondOrderDerivativeKernel是计算每一个段的多项式拟合函数的系数矩阵 Q_i · R_i
+Eigen::MatrixXd SplineSegKernel::SecondOrderDerivativeKernel(
+    const uint32_t num_params, const double accumulated_x) {
+  if (num_params > reserved_order_ + 1) {
+    CalculateSecondOrderDerivative(num_params);
+  }
+  Eigen::MatrixXd term_matrix;
+  IntegratedTermMatrix(num_params, accumulated_x, "second_order", &term_matrix);
+  return kernel_second_order_derivative_.block(0, 0, num_params, num_params)
+      .cwiseProduct(term_matrix);        // 计算Q·R，点乘
+}
+```
+
+在Apollo中将n段多项式曲线的参数合并在一起形成一个大的参数向量X，最终需要优化的系数为：
+
+$$ X = [A_0,B_0,A_1,B_1,...,A_{n-1},B_{n-1}] $$
+
+参数的个数一共：2 * (spline_order + 1) * num_spline
+
+所以无论在设置约束条件还是计算cost函数时，都是讲n段函数并在一起，方便计算。同样的每一段的cost系数$ Pk = (Qk · Rk) * weights $，将所有的cost系数即2\*num_spline个方阵排列在主对角线，每个方阵维度为(spline_order + 1)。最后的三阶导数cost值就为 X^T * kernel_matrix_ * X
+
+Apollo中使用2,3阶导共同构建cost，最后的cost为：
+
+cost = X^T * kernel_matrix_(weight=second_derivative_weight, 200) * X + X^T * kernel_matrix_(weight=third_derivative_weight, 1000) * X
