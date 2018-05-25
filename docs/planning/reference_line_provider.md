@@ -485,15 +485,15 @@ x_sign = std::cos(angle)
 y_sign = std::sin(angle)
 ```
 
-也不需要去计算normalized_angle这些，代码量明显减少了。
+也不需要去计算normalized_angle这些，代码量明显减少了。但是代码这样的写法有一个明显的优势：系数为1或者-1，优化变得简单。
 
 **各函数接壤处平滑约束**
 
 边界约束和方向约束是对每个多项式拟合函数的约束，而相邻多项式函数之间也需要进行约束，需要保证函数间是连续可微的。具体包括：
 
-- 两个函数接壤部分函数值相同，保证连续。
+- 两个函数接壤部分函数值相同，保证连续。(位置一致)
 
-- 两个函数接壤部分一阶和二阶导相同，保证可微
+- 两个函数接壤部分一阶和二阶导相同，保证可微。(速度，加速度一致)
 
 所以从上述可以得知，平滑约束共6个不等式。
 
@@ -567,12 +567,18 @@ bool Spline2dConstraint::AddSecondDerivativeSmoothConstraint() {
       affine_equality(6 * i + 5, j + index_offset + num_params) = second_derivative_t[j];// 第二个多项式y曲线终点二阶导
     }
     affine_equality(6 * i, index_offset + 2 * num_params) = -1.0;          // 第一个多项式x曲线终点函数值 - 第二个多项式x曲线起点函数值
-    affine_equality(6 * i + 1, index_offset + 2 * num_params + 1) = -1.0;  // 第一个多项式x曲线终点一阶导 - 第二个多项式x曲线起点一阶导
-    affine_equality(6 * i + 2, index_offset + 2 * num_params + 2) = -2.0;  // 第一个多项式x曲线终点二阶导 - 第二个多项式x曲线起点二阶导
+    affine_equality(6 * i + 1, index_offset + 2 * num_params + 1) = -1.0;  // 第一个多项式x曲线终点一阶导 - 第二个多项式x曲线起点一阶导(速度一致)
+    affine_equality(6 * i + 2, index_offset + 2 * num_params + 2) = -2.0;  // 第一个多项式x曲线终点二阶导 - 第二个多项式x曲线起点二阶导(加速度一致)
     affine_equality(6 * i + 3, index_offset + 3 * num_params) = -1.0;      // 第一个多项式y曲线终点函数值 - 第二个多项式y曲线起点函数值
-    affine_equality(6 * i + 4, index_offset + 3 * num_params + 1) = -1.0;  // 第一个多项式y曲线终点一阶导 - 第二个多项式y曲线起点一阶导
-    affine_equality(6 * i + 5, index_offset + 3 * num_params + 2) = -2.0;  // 第一个多项式y曲线终点二阶导 - 第二个多项式y曲线起点二阶导
+    affine_equality(6 * i + 4, index_offset + 3 * num_params + 1) = -1.0;  // 第一个多项式y曲线终点一阶导 - 第二个多项式y曲线起点一阶导(速度一致)
+    affine_equality(6 * i + 5, index_offset + 3 * num_params + 2) = -2.0;  // 第一个多项式y曲线终点二阶导 - 第二个多项式y曲线起点二阶导(加速度一致)
   }
   return AddEqualityConstraint(affine_equality, affine_boundary);
 }
 ```
+
+### C. 如何设置cost函数？
+
+由[Apollo参考线平滑器](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/reference_line_smoother.md)可以看到Apollo使用的cost函数:
+
+$$ \int_0^s_i {(f_i^{(3)})^2(s) \,{\rm d}s + g_i^{(3)})^2(s) \,{\rm d}s } $$
