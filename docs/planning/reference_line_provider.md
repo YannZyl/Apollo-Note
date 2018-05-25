@@ -210,6 +210,18 @@ for (const auto& point : anchor_points_) {
 
 **边界约束**
 
+```
+/// file in apollo/modules/planning/reference_line/qp_spline_reference_line_smoother.cc
+bool QpSplineReferenceLineSmoother::AddConstraint() {
+// all points (x, y) should not deviate anchor points by a bounding box
+  if (!spline_constraint->Add2dBoundary(evaluated_t, headings, xy_points, 
+  										longitudinal_bound, lateral_bound)) {
+    AERROR << "Add 2d boundary constraint failed.";
+    return false;
+  }
+}
+```
+
 每个anchor point相对第一个点的相对参考系坐标为(x,y)，方向为heading。而该点坐在的段拟合出来的相对参考系坐标为(x',y')，坐标的计算方式为:
 
 $ x' = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 +a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $
@@ -304,58 +316,276 @@ std::vector<double> Spline2dConstraint::AffineCoef(const double angle, const dou
 
 这部分`longi_coef`和`longitudinal_coef`也比较简单，一句话描述：
 
-$ `longi_coef` = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $
+$ longicoef = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $
 
-$ `longitudinal_coef` = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S] = [cos(\theta)S, sin(\theta)S] $
+$ longitudinalcoef = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S] = [cos(\theta)S, sin(\theta)S] $
 
 两个系数分别是在L轴和F轴上的投影系数。但是longi_coef名字可能改成lateral_coef更合适。最后可以根据这两个值求解在F和L轴上的投影。
 
 $ x_{q,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x', y') = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(SA, SB) $
 
-即$ x_{q,later} = [-sin(\theta)S, cos(\theta)S]·(A, B) =  `longi_coef` · (A, B)$
+即$ x_{q,later} = [-sin(\theta)S, cos(\theta)S]·(A, B) =  longicoef · (A, B)$
 
 $ y_{q,longi} = (cos(\theta), sin(\theta))·(x', y') = (cos(\theta), sin(\theta))·(SA, SB) $
 
-即$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  `longitudinal_coef` · (A, B)$
+即$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  longitudinalcoef · (A, B)$
 
 3. 约束条件设置
 
 现在可以计算真实点和拟合点在F轴L轴的投影，那么就有约束条件：
 
-$ |d\_lateral - longi\_coef·(A, B)| <= lateral\_bound $
+|d_lateral - longi_coef·(A, B)| <= lateral_bound 
 
-$ |d\_longitudinal - longitudinal\_coef(A, B)| <= longitudinal\_bound $
+|d_longitudinal - longitudinal_coef(A, B)| <= longitudinal_bound 
 
 最后得到四个约束不等式：
 
 - L轴上界不等式
 
-$ d\_lateral - longi\_coef·(A, B) <= lateral\_bound $
+d_lateral - longi_coef·(A, B) <= lateral_bound 
 
-整理得到：
-
-$  longi\_coef·(A, B) >= d\_lateral - lateral\_bound $
+整理得到：**longi_coef·(A, B) >= d_lateral - lateral_bound**
 
 - L轴下界不等式
 
-$ d\_lateral - longi\_coef·(A, B) >= -lateral\_bound $
+d_lateral - longi_coef·(A, B) >= -lateral_bound 
 
-整理得到：
-
-$  -longi\_coef·(A, B) >= -d\_lateral - lateral\_bound $
+整理得到： **-longi_coef·(A, B) >= -d_lateral - lateral_bound**
 
 - F轴上界不等式
 
-$ d\_longitudinal - longitudinal\_coef(A, B) <= longitudinal\_bound $
+d_longitudinal - longitudinal_coef·(A, B) <= longitudinal_bound 
 
-整理得到：
-
-$  longitudinal\_coef·(A, B) >= d\_longitudinal - longitudinal\_bound $
+整理得到：**longitudinal_coef·(A, B) >= d_longitudinal - longitudinal_bound**
 
 - F轴下界不等式
 
-$ d\_longitudinal - longitudinal\_coef(A, B) >= -longitudinal\_bound $
+d_longitudinal - longitudinal_coef·(A, B) >= -longitudinal_bound
 
-整理得到：
+整理得到：**-longitudinal_coef·(A, B) >= -d_longitudinal - longitudinal_bound**
 
-$  -longitudinal\_coef(A, B) >= -d\_longitudinal - longitudinal\_bound $
+```c++
+for (uint32_t j = 0; j < 2 * (spline_order_ + 1); ++j) {
+  // upper longi，设置L轴上界不等式系数
+  affine_inequality(4 * i, index_offset + j) = longi_coef[j];
+  // lower longi，设置L轴下界不等式系数
+  affine_inequality(4 * i + 1, index_offset + j) = -longi_coef[j];
+  // upper longitudinal，设置F轴上界不等式系数
+  affine_inequality(4 * i + 2, index_offset + j) = longitudinal_coef[j];
+  // lower longitudinal，设置F轴下界不等式系数
+  affine_inequality(4 * i + 3, index_offset + j) = -longitudinal_coef[j];
+}
+
+affine_boundary(4 * i, 0) = d_lateral - lateral_bound[i];       //设置L轴上界不等式的边界
+affine_boundary(4 * i + 1, 0) = -d_lateral - lateral_bound[i];  //设置L轴下界不等式的边界
+affine_boundary(4 * i + 2, 0) = d_longitudinal - longitudinal_bound[i];   //设置F轴上界不等式的边界
+affine_boundary(4 * i + 3, 0) = -d_longitudinal - longitudinal_bound[i];  //设置L轴下界不等式的边界
+```
+
+配合代码和上述的公式可以不难看出不等式系数的设置和边界设置。经过上述赋值:
+
+`affine_inequality`等同于: [longi_coef, -longi_coef, longitudinal_coef, -longitudinal_coef]
+
+`affine_boundary`等同于: [d_lateral-lateral_bound, -d_lateral-lateral_bound, d_longitudinal-longitudinal_bound, -d_longitudinal-longitudinal_bound]
+
+最后不等式约束：
+
+`affine_inequality * [A1,B1,A2,B2,..An,Bn] >= affine_boundary`
+
+**方向约束**
+
+```
+/// file in apollo/modules/planning/reference_line/qp_spline_reference_line_smoother.cc
+bool QpSplineReferenceLineSmoother::AddConstraint() {
+  // the heading of the first point should be identical to the anchor point.
+  if (!spline_constraint->AddPointAngleConstraint(evaluated_t.front(),
+                                                  headings.front())) {
+    AERROR << "Add 2d point angle constraint failed.";
+    return false;
+  }
+}
+```
+
+第一个anchor point的heading应该和第一段的多项式函数f1和g1的偏导数方向一致，大小可以不一致。也就是： heading = argtan(g1'(s), f1'(s))。从上述代码可以看到，参入的参数是第一个点。
+
+```c++
+/// file in apollo/modules/planning/math/smoothing_spline/spline_2d_constraint.cc
+bool Spline2dConstraint::AddPointAngleConstraint(const double t,
+                                                 const double angle) {
+  const uint32_t index = FindIndex(t);
+  const uint32_t num_params = spline_order_ + 1;
+  const uint32_t index_offset = index * 2 * num_params;
+  const double rel_t = t - t_knots_[index];
+}
+```
+
+第一步还是计算第一个anchor point所属的函数索引index，index_offset是该段函数参数(Ai,Bi)所在的位置偏移，rel_t是第一个点的自变量，归一化到[0,1]。为了确保方向一致，代码中使用两个约束来保证这个方向一致的约束问题：
+
+- L轴分量为0，保证方向相同或者相反
+- 验证同向性
+
+1. L轴分量为0，保证方向相同或者相反
+
+```c++
+bool Spline2dConstraint::AddPointAngleConstraint(const double t,
+                                                 const double angle) {
+  // add equality constraint
+  Eigen::MatrixXd affine_equality = Eigen::MatrixXd::Zero(1, total_param_);
+  Eigen::MatrixXd affine_boundary = Eigen::MatrixXd::Zero(1, 1);
+  std::vector<double> line_derivative_coef = AffineDerivativeCoef(angle, rel_t);
+  for (uint32_t i = 0; i < line_derivative_coef.size(); ++i) {
+    affine_equality(0, i + index_offset) = line_derivative_coef[i];
+  }
+}
+
+std::vector<double> Spline2dConstraint::AffineDerivativeCoef(
+    const double angle, const double t) const {
+  const uint32_t num_params = spline_order_ + 1;
+  std::vector<double> result(num_params * 2, 0.0);
+  double x_coef = -std::sin(angle);
+  double y_coef = std::cos(angle);
+  std::vector<double> power_t = PolyCoef(t);
+  for (uint32_t i = 1; i < num_params; ++i) {
+    result[i] = x_coef * power_t[i - 1] * i;
+    result[i + num_params] = y_coef * power_t[i - 1] * i;
+  }
+  return result;
+}
+```
+
+等式约束还是那句话，第一个点的方向heading和多项式曲线在该点的斜率(一阶导)方向必须一致，大小可以不一致。**方向一致等价于：斜率在L轴方向上的分量为0**
+
+代码中通过`Spline2dConstraint::AffineDerivativeCoef`函数计算得到的系数矩阵`line_derivative_coef`为：
+
+微分矩阵 $ D = [0, 1, 2s, 3s^2, 4s^3, 5s^4] $
+
+line_derivative_coef = [-sin(theta)D, cos(theta)D]
+
+可以得到L轴方向分量的计算方式为 line_derivative_coef · (A, B) = 0
+
+从代码我们可以看到一个问题：只是限制了L轴分量为零，但是不保证同向性。
+
+2. 验证同向性
+
+真实点的方向为heading，拟合多项式在该点的一阶导数为 (D·A, D·B)。代码中对heading做一个处理，规则化到[0, 2\*pi]
+
+计算heading的方向向量sgn = [x_sign, y_sign]，计算方法为：
+
+- 如果正则化heading在[0, pi/2]: sgn = [1, 1]
+- 如果正则化heading在[pi/2, pi]: sgn = [-1, 1]
+- 如果正则化heading在[pi,3\*pi/2]: sgn = [-1, -1]
+- 如果正则化heading在[3\*pi/2, 2\*pi]: sgn = [1, -1]
+
+只需要最后的内积 sgn·(D·A, D·B)>0表明方向一致。
+
+其实有更加简单地方式，heading方向对应的单位向量为(cos(heading), sin(heading))，所以需要要如下代码就可以：
+
+```c++
+x_sign = std::cos(angle)
+y_sign = std::sin(angle)
+```
+
+也不需要去计算normalized_angle这些，代码量明显减少了。
+
+**各函数接壤处平滑约束**
+
+边界约束和方向约束是对每个多项式拟合函数的约束，而相邻多项式函数之间也需要进行约束，需要保证函数间是连续可微的。具体包括：
+
+- 两个函数接壤部分函数值相同，保证连续。
+
+- 两个函数接壤部分一阶和二阶导相同，保证可微
+
+所以从上述可以得知，平滑约束共6个不等式。
+
+$ f_i(t_knots[i+1].s-t_knots[i].s) - f_{i+1}(0) = 0 $
+
+$ g_i(t_knots[i+1].s-t_knots[i].s) - g_{i+1}(0) = 0 $
+
+$ f^{(1)}\_i(t_knots[i+1].s-t_knots[i].s) - f^{(1)}\_{i+1}(0) = 0 $
+
+$ f^{(2)}\_i(t_knots[i+1].s-t_knots[i].s) - f^{(2)}\_{i+1}(0) = 0 $
+
+$ g^{(1)}\_i(t_knots[i+1].s-t_knots[i].s) - g^{(1)}\_{i+1}(0) = 0 $
+
+$ g^{(2)}\_i(t_knots[i+1].s-t_knots[i].s) - g^{(2)}\_{i+1}(0) = 0 $
+
+以x的多项式拟合函数f为例，函数的一阶导和二阶导分别为
+
+$ x' = f^{(1)}\_i(s) = 0 + a_{i1} + 2a_{i2}s + 3a_{i3}s^2 + 4a_{i4}s^3 + 5a_{i5}s^4 $
+
+$ x'' = f^{(2)}\_i(s) = 0 + 0 + 2a_{i2} + 6a_{i3}s + 12a_{i4}s^2 + 20a_{i5}s^3 $
+
+
+$ f_i(t_knots[i+1].s-t_knots[i].s) - a_{i+1,0} = 0 $
+
+$ g_i(t_knots[i+1].s-t_knots[i].s) - b_{i+1,0} = 0 $
+
+$ f^{(1)}\_i(t_knots[i+1].s-t_knots[i].s) - a_{i+1,1} = 0 $
+
+$ f^{(2)}\_i(t_knots[i+1].s-t_knots[i].s) - 2a_{i+1,2} = 0 $
+
+$ g^{(1)}\_i(t_knots[i+1].s-t_knots[i].s) - b_{i+1,1} = 0 $
+
+$ g^{(2)}\_i(t_knots[i+1].s-t_knots[i].s) - 2b_{i+1,2} = 0 $
+
+函数值系数: S = [1, s, s^2, s^3, s^4, s^5]
+
+一阶导系数: Ds = [0, 1, 2s, 3s^2, 4s^3, 5s^4]
+
+二阶导系数: DDs = [0, 0, 2, 6s, 12s^2, 20s^3]
+
+最终简化后的6个等式约束为：
+
+SA_i - [1,0,0,0,0,0]A_{i+1} = 0         
+
+DsA_i - [0,1,0,0,0,0]A_{i+1} = 0
+
+DDsA_i - [0,0,2,0,0,0]A_{i+1} = 0
+
+SB_i - [1,0,0,0,0,0]B_{i+1} = 0
+
+DsB_i - [0,1,0,0,0,0]B_{i+1} = 0
+
+DDsB_i - [0,0,2,0,0,0]B_{i+1} = 0
+
+代码如下
+
+```c++
+// guarantee upto second order derivative are joint
+bool Spline2dConstraint::AddSecondDerivativeSmoothConstraint() {
+  if (t_knots_.size() < 3) {
+    return false;
+  }
+  // 6个等式，affine_equality是系数，affine_boundary是值。约束函数数量：6 * (n-1), n=t_knots_.size()-1
+  Eigen::MatrixXd affine_equality = Eigen::MatrixXd::Zero(6 * (t_knots_.size() - 2), total_param_);
+  Eigen::MatrixXd affine_boundary = Eigen::MatrixXd::Zero(6 * (t_knots_.size() - 2), 1);
+  // 相邻两个knots对之间的多项式拟合函数进行约束
+  for (uint32_t i = 0; i + 2 < t_knots_.size(); ++i) {
+  	// 计算第一个曲线的自变量：t_knots[i+1].s-t_knots[i].s
+    const double rel_t = t_knots_[i + 1] - t_knots_[i];
+    const uint32_t num_params = spline_order_ + 1;
+    const uint32_t index_offset = 2 * i * num_params;
+    // 函数值系数: [1, s, s^2, s^3, s^4, s^5]
+    std::vector<double> power_t = PolyCoef(rel_t);
+    // 一阶导系数: [0, 1, 2s, 3s^2, 4s^3, 5s^4]
+    std::vector<double> derivative_t = DerivativeCoef(rel_t);
+    // 二阶导系数: [0, 0, 2, 6s, 12s^2,20s^3]
+    std::vector<double> second_derivative_t = SecondDerivativeCoef(rel_t);
+    for (uint32_t j = 0; j < num_params; ++j) {
+      affine_equality(6 * i, j + index_offset) = power_t[j];                             // 第一个多项式x曲线终点函数值
+      affine_equality(6 * i + 1, j + index_offset) = derivative_t[j];                    // 第一个多项式x曲线终点一阶导
+      affine_equality(6 * i + 2, j + index_offset) = second_derivative_t[j];             // 第一个多项式x曲线终点二阶导
+      affine_equality(6 * i + 3, j + index_offset + num_params) = power_t[j];            // 第二个多项式y曲线终点函数值
+      affine_equality(6 * i + 4, j + index_offset + num_params) = derivative_t[j];       // 第二个多项式y曲线终点一阶导
+      affine_equality(6 * i + 5, j + index_offset + num_params) = second_derivative_t[j];// 第二个多项式y曲线终点二阶导
+    }
+    affine_equality(6 * i, index_offset + 2 * num_params) = -1.0;          // 第一个多项式x曲线终点函数值 - 第二个多项式x曲线起点函数值
+    affine_equality(6 * i + 1, index_offset + 2 * num_params + 1) = -1.0;  // 第一个多项式x曲线终点一阶导 - 第二个多项式x曲线起点一阶导
+    affine_equality(6 * i + 2, index_offset + 2 * num_params + 2) = -2.0;  // 第一个多项式x曲线终点二阶导 - 第二个多项式x曲线起点二阶导
+    affine_equality(6 * i + 3, index_offset + 3 * num_params) = -1.0;      // 第一个多项式y曲线终点函数值 - 第二个多项式y曲线起点函数值
+    affine_equality(6 * i + 4, index_offset + 3 * num_params + 1) = -1.0;  // 第一个多项式y曲线终点一阶导 - 第二个多项式y曲线起点一阶导
+    affine_equality(6 * i + 5, index_offset + 3 * num_params + 2) = -2.0;  // 第一个多项式y曲线终点二阶导 - 第二个多项式y曲线起点二阶导
+  }
+  return AddEqualityConstraint(affine_equality, affine_boundary);
+}
+```
