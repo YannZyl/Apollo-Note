@@ -687,15 +687,15 @@ $$
 
 所以最终的积分系数矩阵Pk可以分别成两部分：
 
-Pk = Qk(同kernel_third_order_derivative_) · Rk(同term_matrix)(**注意这里是点乘，并非矩阵乘法**)
+`PPk = Qk(同kernel_third_order_derivative_) · Rk(同term_matrix)`(**注意这里是点乘，并非矩阵乘法**)
 
-上述中`kernel_third_order_derivative_`是积分二阶导系数矩阵C，`term_matrix`是s的多项式矩阵。
+上述中`kernel_third_order_derivative_`是积分三阶导系数矩阵，`term_matrix`是s的多项式矩阵。
 
 **C.1 积分导数系数矩阵Q计算**
 
 1. 在三阶导系数矩阵中，每个位置元素的计算方式为：
 
-$$ C_{i,j} = \frac{i\*(i-1)\*(i-2)\*j\*(j-1)\*(j-2)}{i-3+j-3+1} $$
+$$ Q_{i,j} = \frac{i\*(i-1)\*(i-2)\*j\*(j-1)\*(j-2)}{i-3+j-3+1} $$
 
 公式必须保证i和j都要大于等于3，因为低阶项(第0,1,2项)不存在3次导。
 
@@ -716,7 +716,7 @@ void SplineSegKernel::CalculateThirdOrderDerivative(const uint32_t num_params) {
 
 2. 在二阶导系数矩阵中，每个位置元素的计算方式为：
 
-$$ C_{i,j} = \frac{i\*(i-1)\*j\*(j-1)}{i-2+j-2+1} $$
+$$ Q_{i,j} = \frac{i\*(i-1)\*j\*(j-1)}{i-2+j-2+1} $$
 
 公式必须保证i和j都要大于等于2，因为低阶项(第0,1项)不存在2次导。
 
@@ -829,7 +829,7 @@ $$ X = [A_0,B_0,A_1,B_1,...,A_{n-1},B_{n-1}] $$
 
 参数的个数一共：`2 * (spline_order + 1) * num_spline`
 
-所以无论在设置约束条件还是计算cost函数时，都是讲n段函数并在一起，方便计算。同样的每一段的cost系数`Pk = (Qk · Rk) * weight`，将所有的cost系数即`2*num_spline`个方阵排列在主对角线，每个方阵维度为`spline_order+1`。最后的三阶导数cost值就为 `X^T * kernel_matrix_ * X`
+所以无论在设置约束条件还是计算cost函数时，都是讲n段函数并在一起，方便计算。同样的每一段的cost系数`(Qk · Rk) * weight`，将所有的cost系数即`2*num_spline`个方阵排列在主对角线，每个方阵维度为`spline_order+1`。最后的三阶导数cost值就为 `X^T * kernel_matrix_ * X`
 
 Apollo中使用2,3阶导共同构建cost，最后的cost为：
 
