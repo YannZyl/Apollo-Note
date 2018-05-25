@@ -839,4 +839,6 @@ $$ X = [A_0,B_0,A_1,B_1,...,A_{n-1},B_{n-1}] $$
 
 Apollo中使用2,3阶导共同构建cost，最终的cost为：
 
-$$ cost = X^T * matrix(weight=second_derivative_weight, 200) * X + X^T * matrix(weight=third_derivative_weight, 1000) * X $$
+$$ cost = X^T * matrix_1 * X + X^T * matrix_2 * X $$
+
+公式中，matrix_1为二阶导系数矩阵，权值为`second_derivative_weight(200)`; matrix_2为二阶导系数矩阵，权值为`third_derivative_weight(1000)`。
