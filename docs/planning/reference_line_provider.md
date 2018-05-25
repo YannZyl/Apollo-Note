@@ -190,7 +190,172 @@ for (const auto& point : anchor_points_) {
 }
 ```
 
-可以看到x和y都需要减去Path第一个点的世界坐标系坐标，说白了n个(num_spline)函数的坐标原点是Path的第一个点。
+可以看到x和y都需要减去Path第一个点的世界坐标系坐标，说白了2n个(2\*num_spline)函数的坐标原点是Path的第一个点。
 
 ### B. 如何设置约束条件？
 
+在上一步预处理阶段，已经知道：
+
+1. 需要拟合的多项式函数数量为2\*num_spline个，每两个knots之间会拟合x和y两个多项式
+
+2. 多项式最高阶数为5(qp_spline.spline_order: 5)，所以每个多项式共6个参数，参数总和：(spline_order+1)\*2\*num_spline
+
+3. 使用每个段内的anchor point去拟合多项式函数，自变量范围[0,1]，应变量相对于第一个anchor point的相对坐标。所以最后拟合出来的函数f和g的结果是相对于第一个anchor point的相对坐标。
+
+那么在拟合过程中还需要满足一些约束，包括等式约束和不等式约束，例如：
+
+- 预测的x'和y'需要保证在真实x和y的L轴lateral_bound、F轴longitudinal_bound领域内
+- 第一个anchor point的heading和函数的一阶导方向需要一致，大小可以不一致，但是方向必需一致！
+- x和y的n段函数之间，两两接壤部分应该是平滑的，两个函数值、一阶导、二阶导必须一致。
+
+**边界约束**
+
+每个anchor point相对第一个点的相对参考系坐标为(x,y)，方向为heading。而该点坐在的段拟合出来的相对参考系坐标为(x',y')，坐标的计算方式为:
+
+$ x' = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 +a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $
+
+$ y' = g_i(s) = b_{i0} + b_{i1}s + b_{i2}s^2 +b_{i3}s^3 + b_{i4}s^4 + b_{i5}s^5 $
+
+其中i是anchor point所在的knots段，i=1,2,...,n(n=num_spline)
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/boundary_constraint.png)
+
+1. 真实点(x,y)F和L轴投影计算
+
+如上图，实际情况下需要满足拟合坐标(x',y')在真实坐标(x,y)的领域内，真实点的投影计算方法比较简单，首先坐标在侧方L轴上的投影(天蓝色星星)，投影点到原点的距离，也就是侧方距离计算方式为：
+
+$ x_{p,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x, y) $
+
+注意上述公式·为内积操作。这部分对应的代码为：
+
+```c++
+const double d_lateral = SignDistance(ref_point[i], angle[i]);
+
+double Spline2dConstraint::SignDistance(const Vec2d& xy_point, const double angle) const {
+  return common::math::InnerProd(xy_point.x(), xy_point.y(), -std::sin(angle), std::cos(angle));
+}
+```
+
+`ref_point[i]`是第i个anchor point的相对参考系坐标，`angle[i]`为该点的方向heading，也是公式中的theta。
+
+注意一点，代码中的方向向量是(-sin(angle), cos(angle))，其实也可以等价为(cos(angle+pi/2), sin(angle+pi/2))，很明显，代码中的方向向量是在L轴的，所以在计算L轴上的投影距离是，直接将heading传入即可，不需要额外加上一个pi/2。最终代码的计算方式与公式是一致的。
+
+真实点坐标在前方F轴上的投影(大红色星星)，投影点到原点的距离，也就是前方距离计算方式为：
+
+$ y_{p,longi} = (cos(\theta), sin(\theta))·(x, y) $
+
+注意上述公式·为内积操作。对应的代码为:
+
+```c++
+const double d_longitudinal = SignDistance(ref_point[i], angle[i] - M_PI / 2.0);
+```
+
+从L轴到F轴的方向向量，需要减去一个pi/2。
+
+2. 函数预测点(x',y')F和L轴投影计算
+
+根据多项式函数，可以简化出函数预测点(x',y')的计算方式为：
+
+$ x = SA $
+
+$ y = SB $
+
+其中:
+
+$ S = [1, s, s^2, s^3, s^4, s^5] $
+
+$ A = [a_{i0} ,a_{i1}, a_{i2}, a_{i3}, a_{i4}, a_{i5}]^T $
+
+$ B = [b_{i0} ,b_{i1}, b_{i2}, b_{i3}, b_{i4}, b_{i5}]^T $
+
+接下去我们从代码中验证一下正确性。
+
+```c++
+const uint32_t index = FindIndex(t_coord[i]);
+const double rel_t = t_coord[i] - t_knots_[index];
+const uint32_t index_offset = 2 * index * (spline_order_ + 1);
+```
+
+上述过程index是计算公式中的i，也就是计算n个拟合段中anchor point所属的段。rel_t是anchor point累积距离s相对于下界knots累积距离s的相对差，说白了就是自变量归一化到[0,1]之间。
+
+index_offset是该段拟合函数对应的参数位置，我们可以知道n段拟合多项式函数的参数总和为 2\*(spline_order+1)\*n。所以第i个拟合函数的参数偏移位置为2\*(spline_order+1)\*i。
+
+- [2\*(spline_order+1)\*i， 2\*(spline_order+1)\*i+(spline_order+1)]是x多项式函数的参数，共(spline_order+1)个，即向量A；
+- [2\*(spline_order+1)\*i+(spline_order+1)， 2\*(spline_order+1)\*(i+1)]是y多项式函数的参数，共(spline_order+1)个，即向量B
+
+```
+std::vector<double> longi_coef = AffineCoef(angle[i], rel_t);
+std::vector<double> longitudinal_coef = AffineCoef(angle[i] - M_PI / 2, rel_t);
+
+std::vector<double> Spline2dConstraint::AffineCoef(const double angle, const double t) const {
+  const uint32_t num_params = spline_order_ + 1;
+  std::vector<double> result(num_params * 2, 0.0);
+  double x_coef = -std::sin(angle);
+  double y_coef = std::cos(angle);
+  for (uint32_t i = 0; i < num_params; ++i) {
+    result[i] = x_coef;
+    result[i + num_params] = y_coef;
+    x_coef *= t;
+    y_coef *= t;
+  }
+  return result;
+}
+```
+
+这部分`longi_coef`和`longitudinal_coef`也比较简单，一句话描述：
+
+$ longi_coef = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $
+
+$ longitudinal_coef = [-sin(\theta-pi/2)S, cos(\theta-pi/2)S] = [cos(\theta)S, sin(\theta)S] $
+
+两个系数分别是在L轴和F轴上的投影系数。但是longi_coef名字可能改成lateral_coef更合适。最后可以根据这两个值求解在F和L轴上的投影。
+
+$ x_{q,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x', y') = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(SA, SB) $
+
+即$ x_{q,later} = [-sin(\theta)S, cos(\theta)S]·(A, B) =  longi_coef · (A, B)$
+
+$ y_{q,longi} = (cos(\theta), sin(\theta))·(x', y') = (cos(\theta), sin(\theta))·(SA, SB) $
+
+即$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  longitudinal_coef · (A, B)$
+
+3. 约束条件设置
+
+现在可以计算真实点和拟合点在F轴L轴的投影，那么就有约束条件：
+
+$ |d_lateral - longi_coef·(A, B)| <= lateral_bound $
+
+$ |d_longitudinal - longitudinal_coef(A, B)| <= longitudinal_bound $
+
+最后得到四个约束不等式：
+
+- L轴上界不等式
+
+$ d_lateral - longi_coef·(A, B) <= lateral_bound $
+
+整理得到：
+
+$  longi_coef·(A, B) >= d_lateral - lateral_bound $
+
+- L轴下界不等式
+
+$ d_lateral - longi_coef·(A, B) >= -lateral_bound $
+
+整理得到：
+
+$  -longi_coef·(A, B) >= -d_lateral - lateral_bound $
+
+- F轴上界不等式
+
+$ d_longitudinal - longitudinal_coef(A, B) <= longitudinal_bound $
+
+整理得到：
+
+$  longitudinal_coef·(A, B) >= d_longitudinal - longitudinal_bound $
+
+- F轴下界不等式
+
+$ d_longitudinal - longitudinal_coef(A, B) >= -longitudinal_bound $
+
+整理得到：
+
+$  -longitudinal_coef(A, B) >= -d_longitudinal - longitudinal_bound $
