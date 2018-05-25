@@ -591,3 +591,62 @@ cost =
 \Big)
 $$
 </p>
+
+```
+/// file in apollo/modules/planning/conf/qp_spline_smoother_config.pb.txt
+qp_spline {
+  spline_order: 5
+  max_spline_length : 25.0
+  regularization_weight : 1.0e-5
+  second_derivative_weight : 200.0      // 二阶导cost函数权重
+  third_derivative_weight : 1000.0      // 三阶导cost函数权重
+}
+```
+
+实际上，从代码和配置文件中可以看到，其实cost函数用了二阶导和三阶导，下面我们以二阶导和f多项式曲线为例，描述cost函数的计算过程。可知f多项式函数的0,1,2,3阶导函数分别为：
+
+$$ x = f_i(s) = a_{i0} + a_{i1}s + a_{i2}s^2 + a_{i3}s^3 + a_{i4}s^4 + a_{i5}s^5 $$
+
+$$ x' = f_i^{(1)}(s) = 0 + a_{i1} + 2a_{i2}s + 3a_{i3}s^2 + 4a_{i4}s^3 + 5a_{i5}s^4 $$
+
+$$ x'' = f_i^{(2)}(s) = 0 + 0 + 2 + 6a_{i3}s + 12a_{i4}s^2 + 20a_{i5}s^3 $$
+
+$$ x''' = f_i^{(3)}(s) = 0+ 0 + 0 + 6 + 24a_{i4}s^1 + 60a_{i5}s^2 $$
+
+先做如下标记：
+
+$$ Ds_0 = [1, s, s^2, s^3, s^4, s^5] $$
+
+$$ Ds_1 = [0, 1, 2s, 3s^2, 4s^3, 5s^4] $$
+
+$$ Ds_2 = [0, 0, 2, 6s, 12s^2, 20s^3] $$
+
+$$ Ds_3 = [0, 0, 0, 6, 24s, 60s^2] $$
+
+$$ A = [a_{i0}, a_{i1}, a_{i2}, a_{i3}, a_{i4}, a_{i5}] $$
+
+$$ B = [b_{i0}, b_{i1}, b_{i2}, b_{i3}, b_{i4}, b_{i5}] $$
+
+最终cost可以变为：
+
+<p>
+$$
+cost = cost_x + cost_y
+\sum_{i=1}^{n} 
+\Big(
+\int\limits_{0}^{t_i} (Ds_3A)^T(Ds_3A))(t) dt 
++ \int\limits_{0}^{t_i} (Ds_3B)^T(Ds_3B)(t) dt 
+\Big)
+$$
+</p>
+
+<p>
+$$
+cost = cost_x + cost_y
+\sum_{i=1}^{n} 
+\Big(
+\int\limits_{0}^{t_i} A^TDs_3^TDs_3A)(t) dt 
++ \int\limits_{0}^{t_i} B^TDs_3^TDs_3B(t) dt 
+\Big)
+$$
+</p>
