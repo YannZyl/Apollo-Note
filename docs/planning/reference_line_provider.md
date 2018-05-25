@@ -651,6 +651,16 @@ cost =
 $$
 </p>
 
-接下来的难点就是如何求解 $ \int\limits_{0}^{t_i} A^TDs_3^TDs_3A)(t) dt $， 等价于求解$ A^T\int\limits_{0}^{t_i} Ds_3^TDs_3 dtA $
+接下来的难点就是如何求解 $ \int\limits_{0}^{t_i} A^TDs_3^TDs_3A dt = A^T\int\limits_{0}^{t_i} Ds_3^TDs_3 dtA$，等价于求解$ \int\limits_{0}^{t_i} Ds_3^TDs_3 dt $，这个就跟上述的约束一样，是一个系数矩阵。
 
-令$P = TDs_3^TDs_3 $ 可以思考一下
+现令$P = TDs_3^TDs_3 $ 可以思考一下，P中的任意一个元素$P_{ij}$，他的完整计算方式为：
+
+$$ P_{ij} = Ds_3\[i\] * Ds_3\[j\] = (i\*(i-1)\*i-2)s^{i-3} * (j\*(j-1)\*j-2)s^{j-3} = cs^{i+j-6} $$
+
+上述公式中的参数c = i\*(i-1)\*i-2)\*(j\*(j-1)\*j-2)
+
+那么对于这个选一项积分，可以得到：
+
+$$
+\int\limits_{0}^{t_k} P_{ij} dt = \frac{c}{i+j-6}s^{i+j-6+1}
+$$
