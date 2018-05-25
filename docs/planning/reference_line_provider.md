@@ -833,9 +833,10 @@ $$ X = [A_0,B_0,A_1,B_1,...,A_{n-1},B_{n-1}] $$
 
 参数的个数一共：`2 * (spline_order + 1) * num_spline`
 
-所以无论在设置约束条件还是计算cost函数时，都是讲n段函数并在一起，方便计算。同样的每一段的cost系数`(Qk · Rk) * weight`，将所有的cost系数即`2*num_spline`个方阵排列在主对角线，每个方阵维度为`spline_order+1`。最后的三阶导数cost值就为 `X^T * kernel_matrix_ * X`
+所以无论在设置约束条件还是计算cost函数时，都是将n段函数并在一起，方便计算。
 
-Apollo中使用2,3阶导共同构建cost，最后的cost为：
+此外，Apollo还设置了2，3阶复合cost函数，同样的每一段的cost系数`(Qk · Rk) * weight`，将所有的cost系数即`2*num_spline`个方阵排列在主对角线，每个方阵维度为`spline_order+1`。最后的三阶导数cost值就为 `X^T * kernel_matrix_ * X`
 
-`cost = X^T * kernel_matrix_(weight=second_derivative_weight, 200) * X 
-      + X^T * kernel_matrix_(weight=third_derivative_weight, 1000) * X`
+Apollo中使用2,3阶导共同构建cost，最终的cost为：
+
+$$ cost = X^T * matrix(weight=second_derivative_weight, 200) * X + X^T * matrix(weight=third_derivative_weight, 1000) * X $$
