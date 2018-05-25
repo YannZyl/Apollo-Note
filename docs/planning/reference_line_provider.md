@@ -646,8 +646,8 @@ $$
 cost = 
 \sum_{k=1}^{n} 
 \Big(
-\int\limits_{0}^{t_k} (Ds_{3,k}A_k)^T(Ds_{3,k}A_k) dt 
-+ \int\limits_{0}^{t_k} (Ds_{3,k}B_k)^T(Ds_{3,k}B_k) dt 
+\int\limits_{0}^{t_k} (Ds_3A_k)^T(Ds_3A_k) dt 
++ \int\limits_{0}^{t_k} (Ds_3B_k)^T(Ds_3B_k) dt 
 \Big)
 $$
 </p>
@@ -657,15 +657,15 @@ $$
 cost = 
 \sum_{k=1}^{n} 
 \Big(
-\int\limits_{0}^{t_k} {A_k}^T{Ds_{3,k}}^TDs_{3,k}A_k dt 
-+ \int\limits_{0}^{t_k} {B_k}^T{Ds_{3,k}}^TDs_{3,k}B_k dt 
+\int\limits_{0}^{t_k} {A_k}^T{Ds_3}^TDs_3A_k dt 
++ \int\limits_{0}^{t_k} {B_k}^T{Ds_3}^TDs_3B_k dt 
 \Big)
 $$
 </p>
 
 以第k段多项式函数fk为例，接下来的难点就是如何求解 
 
-$$ \int\limits_{0}^{t_k} {A_k}^T{Ds_{3,k}}^TDs_3A_k dt = {A_k}^T\int\limits_{0}^{t_k} {Ds_{3,k}}^TDs_{3,k} dtA_k $$
+$$ \int\limits_{0}^{t_k} {A_k}^T{Ds_3}^TDs_3A_k dt = {A_k}^T\Big(\int\limits_{0}^{t_k} {Ds_3}^TDs_3 dt\Big)A_k $$
 
 等价于求解
 
