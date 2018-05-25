@@ -304,19 +304,19 @@ std::vector<double> Spline2dConstraint::AffineCoef(const double angle, const dou
 
 这部分`longi_coef`和`longitudinal_coef`也比较简单，一句话描述：
 
-$ longi\_coef = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $
+$ `longi_coef` = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $
 
-$ longitudinal\_coef = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S] = [cos(\theta)S, sin(\theta)S] $
+$ `longitudinal_coef` = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S] = [cos(\theta)S, sin(\theta)S] $
 
 两个系数分别是在L轴和F轴上的投影系数。但是longi_coef名字可能改成lateral_coef更合适。最后可以根据这两个值求解在F和L轴上的投影。
 
 $ x_{q,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x', y') = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(SA, SB) $
 
-即$ x_{q,later} = [-sin(\theta)S, cos(\theta)S]·(A, B) =  longi_coef · (A, B)$
+即$ x_{q,later} = [-sin(\theta)S, cos(\theta)S]·(A, B) =  `longi_coef` · (A, B)$
 
 $ y_{q,longi} = (cos(\theta), sin(\theta))·(x', y') = (cos(\theta), sin(\theta))·(SA, SB) $
 
-即$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  longitudinal\_coef · (A, B)$
+即$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  `longitudinal_coef` · (A, B)$
 
 3. 约束条件设置
 
