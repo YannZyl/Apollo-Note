@@ -208,7 +208,7 @@ for (const auto& point : anchor_points_) {
 - 第一个anchor point的heading和函数的一阶导方向需要一致，大小可以不一致，但是方向必需一致！
 - x和y的n段函数之间，两两接壤部分应该是平滑的，两个函数值、一阶导、二阶导必须一致。
 
-**边界约束**
+**B.1 边界约束**
 
 ```
 /// file in apollo/modules/planning/reference_line/qp_spline_reference_line_smoother.cc
@@ -338,35 +338,35 @@ $$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  longitudin
 
 现在可以计算真实点和拟合点在F轴L轴的投影，那么就有约束条件：
 
-|d_lateral - longi_coef·(A, B)| <= lateral_bound 
+`|d_lateral - longi_coef·(A, B)| <= lateral_bound `
 
-|d_longitudinal - longitudinal_coef(A, B)| <= longitudinal_bound 
+`|d_longitudinal - longitudinal_coef(A, B)| <= longitudinal_bound `
 
 最后得到四个约束不等式：
 
 - L轴上界不等式
 
-d_lateral - longi_coef·(A, B) <= lateral_bound 
+`d_lateral - longi_coef·(A, B) <= lateral_bound `
 
-整理得到：**longi_coef·(A, B) >= d_lateral - lateral_bound**
+整理得到：`longi_coef·(A, B) >= d_lateral - lateral_bound`
 
 - L轴下界不等式
 
-d_lateral - longi_coef·(A, B) >= -lateral_bound 
+`d_lateral - longi_coef·(A, B) >= -lateral_bound `
 
-整理得到： **-longi_coef·(A, B) >= -d_lateral - lateral_bound**
+整理得到： `-longi_coef·(A, B) >= -d_lateral - lateral_bound`
 
 - F轴上界不等式
 
-d_longitudinal - longitudinal_coef·(A, B) <= longitudinal_bound 
+`d_longitudinal - longitudinal_coef·(A, B) <= longitudinal_bound `
 
-整理得到：**longitudinal_coef·(A, B) >= d_longitudinal - longitudinal_bound**
+整理得到：`longitudinal_coef·(A, B) >= d_longitudinal - longitudinal_bound`
 
 - F轴下界不等式
 
-d_longitudinal - longitudinal_coef·(A, B) >= -longitudinal_bound
+`d_longitudinal - longitudinal_coef·(A, B) >= -longitudinal_bound`
 
-整理得到：**-longitudinal_coef·(A, B) >= -d_longitudinal - longitudinal_bound**
+整理得到：`-longitudinal_coef·(A, B) >= -d_longitudinal - longitudinal_bound`
 
 ```c++
 for (uint32_t j = 0; j < 2 * (spline_order_ + 1); ++j) {
@@ -388,15 +388,21 @@ affine_boundary(4 * i + 3, 0) = -d_longitudinal - longitudinal_bound[i];  //设�
 
 配合代码和上述的公式可以不难看出不等式系数的设置和边界设置。经过上述赋值:
 
-`affine_inequality`等同于: [longi_coef, -longi_coef, longitudinal_coef, -longitudinal_coef]
+`affine_inequality`等同于: `[longi_coef, 
+                             -longi_coef, 
+                             longitudinal_coef, 
+                             -longitudinal_coef]`
 
-`affine_boundary`等同于: [d_lateral-lateral_bound, -d_lateral-lateral_bound, d_longitudinal-longitudinal_bound, -d_longitudinal-longitudinal_bound]
+`affine_boundary`等同于: `[d_lateral-lateral_bound, 
+                          -d_lateral-lateral_bound, 
+                          d_longitudinal-longitudinal_bound, 
+                          -d_longitudinal-longitudinal_bound]`
 
 最后不等式约束：
 
 `affine_inequality * [A1,B1,A2,B2,..An,Bn] >= affine_boundary`
 
-**方向约束**
+**B.2 方向约束**
 
 ```
 /// file in apollo/modules/planning/reference_line/qp_spline_reference_line_smoother.cc
@@ -463,9 +469,9 @@ std::vector<double> Spline2dConstraint::AffineDerivativeCoef(
 
 微分矩阵 $ D = [0, 1, 2s, 3s^2, 4s^3, 5s^4] $
 
-line_derivative_coef = [-sin(theta)D, cos(theta)D]
+`line_derivative_coef = [-sin(theta)D, cos(theta)D]`
 
-可以得到L轴方向分量的计算方式为 line_derivative_coef · (A, B) = 0
+可以得到L轴方向分量的计算方式为 `line_derivative_coef · (A, B) = 0`
 
 从代码我们可以看到一个问题：只是限制了L轴分量为零，但是不保证同向性。
 
@@ -480,7 +486,7 @@ line_derivative_coef = [-sin(theta)D, cos(theta)D]
 - 如果正则化heading在[pi,3\*pi/2]: sgn = [-1, -1]
 - 如果正则化heading在[3\*pi/2, 2\*pi]: sgn = [1, -1]
 
-只需要最后的内积 sgn·(D·A, D·B)>0表明方向一致。
+只需要最后的内积 `sgn·(D·A, D·B) > 0`表明方向一致。
 
 其实有更加简单地方式，heading方向对应的单位向量为(cos(heading), sin(heading))，所以需要要如下代码就可以：
 
@@ -491,7 +497,7 @@ y_sign = std::sin(angle)
 
 也不需要去计算normalized_angle这些，代码量明显减少了。但是代码这样的写法有一个明显的优势：系数为1或者-1，优化变得简单。
 
-**各函数接壤处平滑约束**
+**B.3 各函数接壤处平滑约束**
 
 边界约束和方向约束是对每个多项式拟合函数的约束，而相邻多项式函数之间也需要进行约束，需要保证函数间是连续可微的。具体包括：
 
@@ -519,25 +525,25 @@ $$ x' = f^{(1)}\_i(s) = 0 + a_{i1} + 2a_{i2}s + 3a_{i3}s^2 + 4a_{i4}s^3 + 5a_{i5
 
 $$ x'' = f^{(2)}\_i(s) = 0 + 0 + 2a_{i2} + 6a_{i3}s + 12a_{i4}s^2 + 20a_{i5}s^3 $$
 
-函数值系数: $ S = [1, s, s^2, s^3, s^4, s^5] $ 
+函数值系数: $ Ds_0 = [1, s, s^2, s^3, s^4, s^5] $ 
 
-一阶导系数: $ Ds = [0, 1, 2s, 3s^2, 4s^3, 5s^4] $ 
+一阶导系数: $ Ds_1 = [0, 1, 2s, 3s^2, 4s^3, 5s^4] $ 
 
-二阶导系数: $ DDs = [0, 0, 2, 6s, 12s^2, 20s^3] $ 
+二阶导系数: $ Ds_2 = [0, 0, 2, 6s, 12s^2, 20s^3] $ 
 
 最终简化后的6个等式约束为：
 
-$$ SA_i - [1,0,0,0,0,0]A_{i+1} = 0 $$ 
+$$ Ds_0A_i - [1,0,0,0,0,0]A_{i+1} = 0 $$ 
 
-$$ DsA_i - [0,1,0,0,0,0]A_{i+1} = 0 $$ 
+$$ Ds_1A_i - [0,1,0,0,0,0]A_{i+1} = 0 $$ 
 
-$$ DDsA_i - [0,0,2,0,0,0]A_{i+1} = 0 $$ 
+$$ Ds_2A_i - [0,0,2,0,0,0]A_{i+1} = 0 $$ 
 
-$$ SB_i - [1,0,0,0,0,0]B_{i+1} = 0 $$ 
+$$ Ds_0B_i - [1,0,0,0,0,0]B_{i+1} = 0 $$ 
 
-$$ DsB_i - [0,1,0,0,0,0]B_{i+1} = 0 $$ 
+$$ Ds_1B_i - [0,1,0,0,0,0]B_{i+1} = 0 $$ 
 
-$$ DDsB_i - [0,0,2,0,0,0]B_{i+1} = 0 $$
+$$ Ds_2B_i - [0,0,2,0,0,0]B_{i+1} = 0 $$
 
 代码如下
 
@@ -666,7 +672,7 @@ $$ Pk_{ij} = Ds_{3,k}\[i\] * Ds_{3,k}\[j\] = (i\*(i-1)\*i-2)s^{i-3} * (j\*(j-1)\
 那么对于这个选一项积分，可以得到：
 
 $$
-\int\limits_{0}^{t_k} Pk_{ij} dt = \frac{c}{i+j-5}s^{i+j-5}
+\int\limits_{0}^{t_k} Pk_{ij} dt = \int\limits_{0}^{t_k} cs^{i+j-6} dt = \frac{c}{i+j-5}s^{i+j-5}
 $$
 
 上述公式需要满足条件: **i, j必须都大于等于3**
