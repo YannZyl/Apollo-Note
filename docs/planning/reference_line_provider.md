@@ -497,17 +497,17 @@ y_sign = std::sin(angle)
 
 所以从上述可以得知，平滑约束共6个不等式。
 
-$ f_i(t_knots[i+1].s-t_knots[i].s) - f_{i+1}(0) = 0 $
+$ f_i(knots[i+1].s-knots[i].s) - f_{i+1}(0) = 0 $
 
-$ g_i(t_knots[i+1].s-t_knots[i].s) - g_{i+1}(0) = 0 $
+$ g_i(knots[i+1].s-knots[i].s) - g_{i+1}(0) = 0 $
 
-$ f^{(1)}\_i(t_knots[i+1].s-t_knots[i].s) - f^{(1)}\_{i+1}(0) = 0 $
+$ f^{(1)}\_i(knots[i+1].s-knots[i].s) - f^{(1)}\_{i+1}(0) = 0 $
 
-$ f^{(2)}\_i(t_knots[i+1].s-t_knots[i].s) - f^{(2)}\_{i+1}(0) = 0 $
+$ f^{(2)}\_i(knots[i+1].s-knots[i].s) - f^{(2)}\_{i+1}(0) = 0 $
 
-$ g^{(1)}\_i(t_knots[i+1].s-t_knots[i].s) - g^{(1)}\_{i+1}(0) = 0 $
+$ g^{(1)}\_i(knots[i+1].s-knots[i].s) - g^{(1)}\_{i+1}(0) = 0 $
 
-$ g^{(2)}\_i(t_knots[i+1].s-t_knots[i].s) - g^{(2)}\_{i+1}(0) = 0 $
+$ g^{(2)}\_i(knots[i+1].s-knots[i].s) - g^{(2)}\_{i+1}(0) = 0 $
 
 以x的多项式拟合函数f为例，函数的一阶导和二阶导分别为
 
