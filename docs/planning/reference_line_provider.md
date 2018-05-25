@@ -304,9 +304,9 @@ std::vector<double> Spline2dConstraint::AffineCoef(const double angle, const dou
 
 这部分`longi_coef`和`longitudinal_coef`也比较简单，一句话描述：
 
-$ longi_coef = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $
+$ longi\_coef = [-sin(\theta)S, cos(\theta)S] = [cos(\theta+\pi/2)S, sin(\theta+\pi/2)S] $
 
-$ longitudinal_coef = [-sin(\theta-pi/2)S, cos(\theta-pi/2)S] = [cos(\theta)S, sin(\theta)S] $
+$ longitudinal\_coef = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S] = [cos(\theta)S, sin(\theta)S] $
 
 两个系数分别是在L轴和F轴上的投影系数。但是longi_coef名字可能改成lateral_coef更合适。最后可以根据这两个值求解在F和L轴上的投影。
 
@@ -316,46 +316,46 @@ $ x_{q,later} = (cos(\theta+\pi/2), sin(\theta+\pi/2))·(x', y') = (cos(\theta+\
 
 $ y_{q,longi} = (cos(\theta), sin(\theta))·(x', y') = (cos(\theta), sin(\theta))·(SA, SB) $
 
-即$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  longitudinal_coef · (A, B)$
+即$ y_{q,longi} = [-sin(\theta-\pi/2)S, cos(\theta-\pi/2)S]·(A, B) =  longitudinal\_coef · (A, B)$
 
 3. 约束条件设置
 
 现在可以计算真实点和拟合点在F轴L轴的投影，那么就有约束条件：
 
-$ |d_lateral - longi_coef·(A, B)| <= lateral_bound $
+$ |d\_lateral - longi\_coef·(A, B)| <= lateral\_bound $
 
-$ |d_longitudinal - longitudinal_coef(A, B)| <= longitudinal_bound $
+$ |d\_longitudinal - longitudinal\_coef(A, B)| <= longitudinal\_bound $
 
 最后得到四个约束不等式：
 
 - L轴上界不等式
 
-$ d_lateral - longi_coef·(A, B) <= lateral_bound $
+$ d\_lateral - longi\_coef·(A, B) <= lateral\_bound $
 
 整理得到：
 
-$  longi_coef·(A, B) >= d_lateral - lateral_bound $
+$  longi\_coef·(A, B) >= d\_lateral - lateral\_bound $
 
 - L轴下界不等式
 
-$ d_lateral - longi_coef·(A, B) >= -lateral_bound $
+$ d\_lateral - longi\_coef·(A, B) >= -lateral\_bound $
 
 整理得到：
 
-$  -longi_coef·(A, B) >= -d_lateral - lateral_bound $
+$  -longi\_coef·(A, B) >= -d\_lateral - lateral\_bound $
 
 - F轴上界不等式
 
-$ d_longitudinal - longitudinal_coef(A, B) <= longitudinal_bound $
+$ d\_longitudinal - longitudinal\_coef(A, B) <= longitudinal\_bound $
 
 整理得到：
 
-$  longitudinal_coef·(A, B) >= d_longitudinal - longitudinal_bound $
+$  longitudinal\_coef·(A, B) >= d\_longitudinal - longitudinal\_bound $
 
 - F轴下界不等式
 
-$ d_longitudinal - longitudinal_coef(A, B) >= -longitudinal_bound $
+$ d\_longitudinal - longitudinal\_coef(A, B) >= -longitudinal\_bound $
 
 整理得到：
 
-$  -longitudinal_coef(A, B) >= -d_longitudinal - longitudinal_bound $
+$  -longitudinal\_coef(A, B) >= -d\_longitudinal - longitudinal\_bound $
