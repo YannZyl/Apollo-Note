@@ -8,11 +8,9 @@
 
 2. knots分段与二次规划进行参考线平滑
 
-3. 平滑参考线的拼接
+除了参考线平，参考线提供器还提供参考线拼接的功能。参考线拼接是针对不同时刻的RawReference，如果两条原始的RawReference是相连并且有覆盖的，那么可以不需要重新去进行平滑，只要直接使用上时刻的平滑参考线，或者仅仅平滑部分anchor point即可。
 
-其实上述3平滑参考线拼接是针对不同时刻的RawReference，如果两条原始的RawReference是相连并且有覆盖的，那么可以不需要重新去进行平滑，只要直接使用上时刻的平滑参考线，或者仅仅平滑部分anchor point即可。
-
-## 路径点采样与轨迹点矫正
+## 功能1参考线平滑：路径点采样与轨迹点矫正
 
 控制规划地图Pnc Map根据当前车辆状态与Routing模块规划路径响应可以得到当前情况下，车辆的可行驶方案Path的集合(每个RouteSegments生成对应的一个Path)。在Path中路径以`std::vector<common::math::LineSegment2d> segments_`和`std::vector<MapPathPoint> path_points_`存在，前者是段的形式，而后者是原始离散点的形式。那么这个Path其实就是路径的离散形式表示，在本节中，我们需要行驶路径(参考线)的连续表示法，也就是根据这些离散点拟合一个合理的连续函数。
 
@@ -143,7 +141,7 @@ anchor.longitudinal_bound = smoother_config_.longitudinal_boundary_bound();
 最后当使用二次规划来拟合轨迹点时，需要设置该点的约束，`lateral_bound`指的是预测的x值需要在ref_point的L轴的lateral_bound左右领域内，`longitudinal_bound`是预测的y值需要在ref_point的F轴的longitudinal_bound前后领域内
 
 
-## knots分段与二次规划进行参考线平滑
+## 功能1参考线平滑：knots分段与二次规划进行参考线平滑
 
 通过第一阶段路径点采样与轨迹点矫正，可以得到这条路径的anchor_point集合，里面是若干矫正过后的轨迹点，但还是离散形式。这个阶段我们需要对上述离散轨迹点进行多项式拟合。这部分内容也可以参考[Apollo参考线平滑器](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/reference_line_smoother.md)。官方文档介绍的偏简单，在这里将从代码入手介绍一下参考线平滑过程。
 
@@ -990,7 +988,7 @@ bool ReferenceLineProvider::IsReferenceLineSmoothValid(
 }
 ```
 
-## 平滑参考线的拼接
+## 功能2：平滑参考线的拼接
 
 平滑参考线拼接是针对不同时刻的RawReference，如果两条原始的RawReference是相连并且有覆盖的，那么可以不需要重新去进行平滑，只要直接使用上时刻的平滑参考线，或者仅仅平滑部分anchor point即可。
 
