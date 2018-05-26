@@ -699,7 +699,7 @@ $$
 
 $$ Q_{i,j} = \frac{i\*(i-1)\*(i-2)\*j\*(j-1)\*(j-2)}{i-3+j-3+1} $$
 
-公式必须保证i和j都要大于等于3，因为低阶项(第0,1,2项)不存在3次导。
+公式必须保证i和j都要大于等于3，因为低阶项(第0,1,2项)不存在3次导；或者说低阶项的三阶导为0，积分过后的系数矩阵依旧为0。
 
 ```c++
 /// file in apollo/modules/planning/math/smoothing_spline/spline_seg_kernel.cc
@@ -720,7 +720,7 @@ void SplineSegKernel::CalculateThirdOrderDerivative(const uint32_t num_params) {
 
 $$ Q_{i,j} = \frac{i\*(i-1)\*j\*(j-1)}{i-2+j-2+1} $$
 
-公式必须保证i和j都要大于等于2，因为低阶项(第0,1项)不存在2次导。
+公式必须保证i和j都要大于等于2，因为低阶项(第0,1项)不存在2次导；或者说低阶项的二阶导为0，积分过后的系数矩阵依旧为0。
 
 ```c++
 /// file in apollo/modules/planning/math/smoothing_spline/spline_seg_kernel.cc
@@ -827,20 +827,51 @@ Eigen::MatrixXd SplineSegKernel::SecondOrderDerivativeKernel(
 }
 ```
 
-在Apollo中将n段多项式曲线的参数合并在一起形成一个大的参数向量X，最终需要优化的系数为：
+在Apollo中将n段多项式曲线的参数合并在一起形成一个大的参数向量x，最终需要优化的系数为：
 
-$$ X = [A_0,B_0,A_1,B_1,...,A_{n-1},B_{n-1}] $$
+$$ x = [A_0,B_0,A_1,B_1,...,A_{n-1},B_{n-1}] $$
 
 参数的个数一共：`2 * (spline_order + 1) * num_spline`
 
 所以无论在设置约束条件还是计算cost函数时，都是将n段函数并在一起，方便计算。
 
-此外，Apollo还设置了2，3阶复合cost函数，同样的每一段的cost系数`(Qk · Rk) * weight`，将所有的cost系数即`2*num_spline`个方阵排列在主对角线，每个方阵维度为`spline_order+1`。最后的三阶导数cost值就为 `X^T * kernel_matrix_ * X`
+此外，Apollo还设置了2，3阶复合cost函数，同样的每一段的cost系数`(Qk · Rk) * weight`，将所有的cost系数即`2*num_spline`个方阵排列在主对角线，每个方阵维度为`spline_order+1`。最后的三阶导数cost值就为 `x^T * kernel_matrix_ * x`
 
 Apollo中使用2,3阶导共同构建cost，最终的cost为：
 
-$$ cost = X^T * matrix_1 * X + X^T * matrix_2 * X $$
+$$ cost = x^T * H_1 * x + x^T * H_2 * x $$
 
-公式中，matrix_1为二阶导系数矩阵，权值为`second_derivative_weight(200)`; matrix_2为二阶导系数矩阵，权值为`third_derivative_weight(1000)`。
+公式中，H_1为二阶导系数矩阵，权值为`second_derivative_weight(200)`; H_2为二阶导系数矩阵，权值为`third_derivative_weight(1000)`。
 
 **最后一个问题，cost函数为什么设置成这样？暂时没想明白**
+
+#### C.4 正则化项
+
+加入正则化项是对参数进行惩罚，常见的有：
+
+- L1正则：$ fx $
+- L2正则：$ x^Tfx $
+
+```
+qp_spline {
+  spline_order: 5
+  max_spline_length : 25.0
+  regularization_weight : 1.0e-5       // L2正则系数
+  second_derivative_weight : 200.0
+  third_derivative_weight : 1000.0
+}
+```
+
+两者区别在于L1用于参数的稀疏，L2正则是防止过拟合，Apollo采用后者作为惩罚项。F的值取1e-5。所以得到最后的F矩阵是对角阵，对角每个元素为1e-5.
+
+```c++
+// customized input output
+void Spline2dKernel::AddRegularization(const double regularization_param) {
+  Eigen::MatrixXd id_matrix = Eigen::MatrixXd::Identity(kernel_matrix_.rows(), kernel_matrix_.cols());
+  kernel_matrix_ += id_matrix * regularization_param;
+}
+```
+
+经过上述C.1-C.4处理，最终的优化目标函数等于cost加上正则化项，形式为：
+
+$$ \frac{1}{2} \cdot x^T \cdot H \cdot x + f^T \cdot x \\ s.t. LB \leq x \leq UB \\ A_{eq}x = b_{eq} \\ Ax \leq b $$
