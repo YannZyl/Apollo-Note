@@ -906,7 +906,7 @@ bool QpSplineReferenceLineSmoother::Smooth(
 
 上述代码就可以看到采样的起点、终点、精度和采样数量。
 
-```
+```c++
 /// file in apollo/modules/planning/reference_line/qp_spline_reference_line_smoother.cc
 bool QpSplineReferenceLineSmoother::Smooth(
 	    const ReferenceLine& raw_reference_line,
