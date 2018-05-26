@@ -8,6 +8,10 @@
 
 2. knots分段与二次规划进行参考线平滑
 
+3. 平滑参考线的拼接
+
+其实上述3平滑参考线拼接是针对不同时刻的RawReference，如果两条原始的RawReference是相连并且有覆盖的，那么可以不需要重新去进行平滑，只要直接使用上时刻的平滑参考线，或者仅仅平滑部分anchor point即可。
+
 ## 路径点采样与轨迹点矫正
 
 控制规划地图Pnc Map根据当前车辆状态与Routing模块规划路径响应可以得到当前情况下，车辆的可行驶方案Path的集合(每个RouteSegments生成对应的一个Path)。在Path中路径以`std::vector<common::math::LineSegment2d> segments_`和`std::vector<MapPathPoint> path_points_`存在，前者是段的形式，而后者是原始离散点的形式。那么这个Path其实就是路径的离散形式表示，在本节中，我们需要行驶路径(参考线)的连续表示法，也就是根据这些离散点拟合一个合理的连续函数。
@@ -875,3 +879,363 @@ void Spline2dKernel::AddRegularization(const double regularization_param) {
 经过上述C.1-C.4处理，最终的优化目标函数等于cost加上正则化项，形式为：
 
 $$ \frac{1}{2} \cdot x^T \cdot H \cdot x + f^T \cdot x \\ s.t. LB \leq x \leq UB \\ A_{eq}x = b_{eq} \\ Ax \leq b $$
+
+### D. 如何优化求解系数
+
+请参考[开源软件qpOASES](https://projects.coin-or.org/qpOASES)
+
+求解完这个QP问题就可以得到系数矩阵，也变相得到了x和y的这n段平滑曲线，最后的工作就是包装秤一条ReferenceLine，如何包装？答案是采样，用更细的细度去采样离散保存这条基准线。
+
+```c++
+/// file in apollo/modules/planning/reference_line/qp_spline_reference_line_smoother.cc
+bool QpSplineReferenceLineSmoother::Smooth(
+	    const ReferenceLine& raw_reference_line,
+    ReferenceLine* const smoothed_reference_line) {
+  // Step A
+  // mapping spline to reference line point
+  const double start_t = t_knots_.front(); // 原始ReferenceLine的起点，第一个anchor point，也是平滑后的ReferenceLine起点
+  const double end_t = t_knots_.back();    // 原始ReferenceLine的终点，最后一个anchor point，也是平滑后的ReferenceLine终点
+
+  const double resolution = (end_t - start_t) / (config_.num_of_total_points() - 1); // 采样精度，一共采样500个点。
+  double t = start_t;
+  std::vector<ReferencePoint> ref_points;     // 采样点保存
+  const auto& spline = spline_solver_->spline();
+  ...
+}
+```
+
+上述代码就可以看到采样的起点、终点、精度和采样数量。
+
+```
+/// file in apollo/modules/planning/reference_line/qp_spline_reference_line_smoother.cc
+bool QpSplineReferenceLineSmoother::Smooth(
+	    const ReferenceLine& raw_reference_line,
+    ReferenceLine* const smoothed_reference_line) {
+  // Step A
+  ...
+  // Step B
+  for (std::uint32_t i = 0; i < config_.num_of_total_points() && t < end_t; ++i, t += resolution) {
+    const double heading = std::atan2(spline.DerivativeY(t), spline.DerivativeX(t)); // 采样点速度大小
+    const double kappa = CurveMath::ComputeCurvature(                // 采样点曲率，弧线越直曲率越小；弧线越弯，曲率越大
+        spline.DerivativeX(t), spline.SecondDerivativeX(t),
+        spline.DerivativeY(t), spline.SecondDerivativeY(t));
+    const double dkappa = CurveMath::ComputeCurvatureDerivative(     // 曲率导数，描述曲率变化
+        spline.DerivativeX(t), spline.SecondDerivativeX(t),
+        spline.ThirdDerivativeX(t), spline.DerivativeY(t),
+        spline.SecondDerivativeY(t), spline.ThirdDerivativeY(t));
+
+    std::pair<double, double> xy = spline(t);    // 求解累积距离为t时曲线的坐标，也是相对与第一个点的偏移坐标
+    xy.first += ref_x_;           // 加上第一个anchor point的世界系坐标，变成世界系坐标
+    xy.second += ref_y_;
+    common::SLPoint ref_sl_point;
+    if (!raw_reference_line.XYToSL({xy.first, xy.second}, &ref_sl_point)) {
+      return false;
+    }
+    if (ref_sl_point.s() < -kEpsilon || ref_sl_point.s() > raw_reference_line.Length()) {
+      continue;
+    }
+    ref_sl_point.set_s(std::max(ref_sl_point.s(), 0.0));
+    // 将点封装成ReferencePoint，并加入向量
+    ReferencePoint rlp = raw_reference_line.GetReferencePoint(ref_sl_point.s());
+    auto new_lane_waypoints = rlp.lane_waypoints();
+    for (auto& lane_waypoint : new_lane_waypoints) {
+      lane_waypoint.l = ref_sl_point.l();
+    }
+    ref_points.emplace_back(ReferencePoint(
+        hdmap::MapPathPoint(common::math::Vec2d(xy.first, xy.second), heading,
+                            new_lane_waypoints), kappa, dkappa));
+  }
+  // 去除过近的冗余点，最终将vector<ReferencePoint>封装成ReferenceLine
+  ReferencePoint::RemoveDuplicates(&ref_points);
+  if (ref_points.size() < 2) {
+    AERROR << "Fail to generate smoothed reference line.";
+    return false;
+  }
+  *smoothed_reference_line = ReferenceLine(ref_points);
+  return true;
+}
+```
+
+上述平滑ReferenceLine的生成过程其实也比较简单，分别采集每个点，计算坐标，速度，曲率，曲率导数等信息；然后修正采样点的累积距离便可以得到平滑后参考线的采样点。最后对所有的采样点封装变成平滑的参考线。
+
+**至此，knots分段与二次规划进行参考线平滑阶段已经全部完成，可以看到平滑参考线其实依旧是一个采样的过程，为什么不对原始的参考线直接进行更细粒度的采样(与anchor point和knots采样一样)？这里的理解是使用平滑参考线可以实时计算参考线上每个点的速度，曲率，曲率导数等信息，可以进一步描述车辆的运动状态信息。例如，车辆在平坦或者弯道部分(查询kappa)？车辆正要进入弯道还是脱离弯道(查询dkappa)？**
+
+在得到平滑参考线以后一定要做一个校验：对平滑参考线SmoothReferenceLine上的点(可以采样，比如累积距离每10m采样)，投影到原始参考线RawReferenceLine的距离为l，l不能太大，否则两条参考线有较大的偏移。这也是`IsReferenceLineSmoothValid`的工作。
+
+```c++
+/// file in apollo/modules/planning/reference_line/reference_line_provider.cc
+bool ReferenceLineProvider::IsReferenceLineSmoothValid(
+    const ReferenceLine &raw, const ReferenceLine &smoothed) const {
+  constexpr double kReferenceLineDiffCheckStep = 10.0;
+  for (double s = 0.0; s < smoothed.Length();
+       s += kReferenceLineDiffCheckStep) {
+    auto xy_new = smoothed.GetReferencePoint(s);
+
+    common::SLPoint sl_new;
+    if (!raw.XYToSL(xy_new, &sl_new)) {
+      AERROR << "Fail to change xy point on smoothed reference line to sl "
+                "point respect to raw reference line.";
+      return false;
+    }
+
+    const double diff = std::fabs(sl_new.l());
+    if (diff > FLAGS_smoothed_reference_line_max_diff) {
+      AERROR << "Fail to provide reference line because too large diff "
+                "between smoothed and raw reference lines. diff: "
+             << diff;
+      return false;
+    }
+  }
+  return true;
+}
+```
+
+## 平滑参考线的拼接
+
+平滑参考线拼接是针对不同时刻的RawReference，如果两条原始的RawReference是相连并且有覆盖的，那么可以不需要重新去进行平滑，只要直接使用上时刻的平滑参考线，或者仅仅平滑部分anchor point即可。
+
+例如上时刻得到的平滑参考线reference_prev，这时刻由RouteSegments得到的原始费平滑参考线reference_current。由于RouteSegments生成有一个look_forward_distance的前向查询距离，所以这时候车辆的位置很可能还在前一时刻的平滑参考线reference_prev，这时候就可以复用上时刻的参考线信息，下面我们直接从代码来理解参考线拼接的流程和逻辑。
+
+```c++
+/// file in apollo/modules/planning/reference_line/reference_line_provider.cc
+bool ReferenceLineProvider::CreateReferenceLine(
+    std::list<ReferenceLine> *reference_lines,
+    std::list<hdmap::RouteSegments> *segments) {
+  if (!CreateRouteSegments(vehicle_state, look_backward_distance, look_forward_distance, segments)) {
+    return false;
+  }
+  // A. 参考线平滑，条件enable_reference_line_stitching设置为False，也就是不允许参考线拼接操作
+  if (is_new_routing || !FLAGS_enable_reference_line_stitching) {
+    for (auto iter = segments->begin(); iter != segments->end();) {
+      reference_lines->emplace_back();
+      if (!SmoothRouteSegment(*iter, &reference_lines->back())) {
+        AERROR << "Failed to create reference line from route segments";
+        reference_lines->pop_back();
+        iter = segments->erase(iter);
+      } else {
+        ++iter;
+      }
+    }
+    return true;
+  } else {         // B. 允许参考线拼接
+    for (auto iter = segments->begin(); iter != segments->end();) {
+      reference_lines->emplace_back();
+      if (!ExtendReferenceLine(vehicle_state, &(*iter), &reference_lines->back())) {
+        AERROR << "Failed to extend reference line";
+        reference_lines->pop_back();
+        iter = segments->erase(iter);
+      } else {
+        ++iter;
+      }
+    }
+  }
+  return true;
+}
+```
+
+下面我们将深入ExtendReferenceLine参考线扩展/拼接函数，查看逻辑，通过代码我们将逻辑整理如下：
+
+1. 根据历史缓存信息，查询当前RouteSegments是否在某条(Smoothed)ReferenceLine上，如果不是就直接进行平滑参考线操作
+
+```c++
+bool ReferenceLineProvider::ExtendReferenceLine(const VehicleState &state,
+                                                RouteSegments *segments,
+                                                ReferenceLine *reference_line) {
+  // Case A
+  RouteSegments segment_properties;
+  segment_properties.SetProperties(*segments);
+  auto prev_segment = route_segments_.begin();
+  auto prev_ref = reference_lines_.begin();
+  while (prev_segment != route_segments_.end()) {
+    if (prev_segment->IsConnectedSegment(*segments)) {
+      break;
+    }
+    ++prev_segment;
+    ++prev_ref;
+  }
+  if (prev_segment == route_segments_.end()) {
+    return SmoothRouteSegment(*segments, reference_line);
+  }
+```
+
+查询路径段prev_segment是否连接到segments整个路径上的函数IsConnectedSegment其实很简单，无非以下四种情况：
+
+- segments整个路径的起点在prev_segment段内
+- segments整个路径的终点在prev_segment段内
+- prev_segment路径段的起点落在segments路径上
+- prev_segment路径段的终点落在segments路径上
+
+2. 如果在同一个平滑参考线(历史平滑参考线)上，计算车辆当前位置和历史平滑参考线终点的距离，如果距离超过了阈值，则可以复用这条历史参考线；否则长度不够需要拼接。
+
+```c++
+bool ReferenceLineProvider::ExtendReferenceLine(const VehicleState &state,
+                                                RouteSegments *segments,
+                                                ReferenceLine *reference_line) {
+  // Case A
+  ...
+  // Case B
+  common::SLPoint sl_point;
+  Vec2d vec2d(state.x(), state.y());
+  LaneWaypoint waypoint;
+  if (!prev_segment->GetProjection(vec2d, &sl_point, &waypoint)) {   // 计算车辆当前位置在历史平滑参考线上的位置
+    return SmoothRouteSegment(*segments, reference_line);
+  }
+  const double prev_segment_length = RouteSegments::Length(*prev_segment);    // 历史平滑参考线总长度
+  const double remain_s = prev_segment_length - sl_point.s();                 // 历史平滑参考线前方剩下的距离
+  const double look_forward_required_distance = LookForwardDistance(state);   // 前向查询距离
+  if (remain_s > look_forward_required_distance) {       // 如果剩下的距离足够长，那么直接复用这条历史平滑参考线。
+    *segments = *prev_segment;
+    segments->SetProperties(segment_properties);
+    *reference_line = *prev_ref;
+    return true;
+  }
+```
+
+3. 如果2种情况历史参考线遗留长度不够，那么久需要先对RouteSegments进行扩展，这部分在[Pnc Map后接车道处理]((https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/pnc_map.md/#sample_extend))中有相关介绍。如果扩展失败直接进行平滑操作；如果扩展以后长度仍然不够，说明死路没有后继车道，只能复用历史平滑参考线。
+
+```c++
+bool ReferenceLineProvider::ExtendReferenceLine(const VehicleState &state,
+                                                RouteSegments *segments,
+                                                ReferenceLine *reference_line) {
+  // Case A
+  ...
+  // Case B
+  ...
+  // Case C
+  double future_start_s =
+      std::max(sl_point.s(), prev_segment_length - FLAGS_reference_line_stitch_overlap_distance);
+  double future_end_s = prev_segment_length + FLAGS_look_forward_extend_distance;  // 向后额外扩展look_forward_extend_distance的距离，默认50m
+  RouteSegments shifted_segments;
+  std::unique_lock<std::mutex> lock(pnc_map_mutex_);
+  if (!pnc_map_->ExtendSegments(*prev_segment, future_start_s, future_end_s, &shifted_segments)) {
+    lock.unlock();
+    AERROR << "Failed to shift route segments forward";
+    return SmoothRouteSegment(*segments, reference_line);         // C.1 扩展操作失败，直接对新的RouteSegments进行平滑得到平滑参考线
+  }
+  lock.unlock();
+  if (prev_segment->IsWaypointOnSegment(shifted_segments.LastWaypoint())) { 
+    *segments = *prev_segment;                                  // C.2 扩展操作成功，但是扩招以后长度没有太大变化，死路，直接使用历史平滑参考线
+    segments->SetProperties(segment_properties);
+    *reference_line = *prev_ref;
+    ADEBUG << "Could not further extend reference line";
+    return true;
+  }
+```
+
+4. 如果3情况下扩展成功，并且额外增加了一定长度，得到了新的Path(也即新的RouteSegments)，接下来对新的路径进行平滑然后与历史平滑参考线进行拼接，就可以得到一条更长的平滑参考线。
+
+```c++
+bool ReferenceLineProvider::ExtendReferenceLine(const VehicleState &state,
+                                                RouteSegments *segments,
+                                                ReferenceLine *reference_line) {
+  // Case A
+  ...
+  // Case B
+  ...
+  // Case C
+  ...
+  // Case D
+  hdmap::Path path;
+  hdmap::PncMap::CreatePathFromLaneSegments(shifted_segments, &path);
+  ReferenceLine new_ref(path);
+  if (!SmoothPrefixedReferenceLine(*prev_ref, new_ref, reference_line)) {     // SmoothPrefixedReferenceLine过程和普通的拼接其实没多大差异
+    AWARN << "Failed to smooth forward shifted reference line";
+    return SmoothRouteSegment(*segments, reference_line);
+  }
+  if (!reference_line->Stitch(*prev_ref)) {                 // 两条平滑车道线拼接
+    AWARN << "Failed to stitch reference line";
+    return SmoothRouteSegment(*segments, reference_line);
+  }
+  if (!shifted_segments.Stitch(*prev_segment)) {            // 两条平滑车道线对应的RouteSegments拼接
+    AWARN << "Failed to stitch route segments";
+    return SmoothRouteSegment(*segments, reference_line);
+  }
+```
+
+拼接过程也是非常简单，我们可以直接看Apollo给出的定义
+
+>   * Stitch current reference line with the other reference line
+>   * The stitching strategy is to use current reference points as much as
+>   * possible. The following two examples show two successful stitch cases.
+>   *
+>   * Example 1
+>   * this:   |--------A-----x-----B------|
+>   * other:                 |-----C------x--------D-------|
+>   * Result: |------A-----x-----B------x--------D-------|
+>   * In the above example, A-B is current reference line, and C-D is the other
+>   * reference line. If part B and part C matches, we update current reference
+>   * line to A-B-D.
+>   *
+>   * Example 2
+>   * this:                  |-----A------x--------B-------|
+>   * other:  |--------C-----x-----D------|
+>   * Result: |--------C-----x-----A------x--------B-------|
+>   * In the above example, A-B is current reference line, and C-D is the other
+>   * reference line. If part A and part D matches, we update current reference
+>   * line to C-A-B.
+>   *
+>   * @return false if these two reference line cannot be stitched
+
+5. 当在4完成参考线的拼接以后，就可以得到一条更长的参考线，前向查询距离经过限制不会超出要求，但是随着车辆的前进，车后参考线的长度会变得很大，所以最后一步就是对车后的参考线进行收缩，保证车辆前后都有合理长度的参考线
+
+```c++
+bool ReferenceLineProvider::ExtendReferenceLine(const VehicleState &state,
+                                                RouteSegments *segments,
+                                                ReferenceLine *reference_line) {
+  // Case A
+  ...
+  // Case B
+  ...
+  // Case C
+  ...
+  // Case D
+  ...
+  // Case E
+  *segments = shifted_segments;
+  segments->SetProperties(segment_properties);
+  common::SLPoint sl;
+  if (sl.s() > FLAGS_look_backward_distance * 1.5) {      // 如果车后参考线的距离大于后向查询距离1.5倍，就需要收缩
+    if (!reference_line->Shrink(vec2d, FLAGS_look_backward_distance,            // E.1 拼接参考线收缩
+                                std::numeric_limits<double>::infinity())) {
+      AWARN << "Failed to shrink reference line";
+    }
+    if (!segments->Shrink(vec2d, FLAGS_look_backward_distance,                  // E.2 对应的RouteSegments收缩
+                          std::numeric_limits<double>::infinity())) {
+      AWARN << "Failed to shrink route segment";
+    }
+  }
+```
+
+收缩参考线ReferenceLine的操作很简单，就是删除查询距离1.5倍之后的ReferencePoint即可。
+
+```c++
+/// file in apollo/modules/planning/reference_line/reference_line.cc
+bool ReferenceLine::Shrink(const common::math::Vec2d& point,
+                           double look_backward, double look_forward) {
+  common::SLPoint sl;
+  if (!XYToSL(point, &sl)) {
+    return false;
+  }
+  const auto& accumulated_s = map_path_.accumulated_s();
+  size_t start_index = 0;
+  if (sl.s() > look_backward) {             // 查询收缩下界
+    auto it_lower = std::lower_bound(accumulated_s.begin(), accumulated_s.end(), sl.s() - look_backward);
+    start_index = std::distance(accumulated_s.begin(), it_lower);
+  }
+  size_t end_index = reference_points_.size();
+  if (sl.s() + look_forward < Length()) {   // 查询收缩上界
+    auto start_it = accumulated_s.begin();
+    std::advance(start_it, start_index);
+    auto it_higher = std::upper_bound(start_it, accumulated_s.end(), sl.s() + look_forward);
+    end_index = std::distance(accumulated_s.begin(), it_higher);
+  }
+  // 删除上界和下界以外的点，完成收缩
+  reference_points_.erase(reference_points_.begin() + end_index, reference_points_.end());
+  reference_points_.erase(reference_points_.begin(), reference_points_.begin() + start_index);
+  map_path_ = MapPath(std::vector<hdmap::MapPathPoint>(
+      reference_points_.begin(), reference_points_.end()));
+  return true;
+}
+```
+
+注意在`ReferenceLineProvider::ExtendReferenceLine`中不论是ReferenceLine还是RouteSegments的Shrink函数，`look_forward`参数都设置为无穷大，所以只是后向收缩，前向不收缩。

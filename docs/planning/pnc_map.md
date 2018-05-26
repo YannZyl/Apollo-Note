@@ -627,6 +627,8 @@ bool PncMap::ExtendSegments(const RouteSegments &segments, double start_s,
 }
 ```
 
+<div id="sample_extend"></div>
+
 2. 后接车道处理
 
 在1中常规的passage中LaneSegment截取结束后，如果router_s仍然小于end_s，就说明车道截取还未结束，还有一段长度`end_s - router_s`的道路段未被截取，此时passage中的LaneSegment已经全部截取完了，所以需要访问最后一个LaneSegment对应的lane，需要继续截取这条lane的后续部分，如果后续部分长度仍然不够，就需要加入这条lane的后接车道继续截取。
