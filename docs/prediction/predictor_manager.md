@@ -226,3 +226,5 @@ Free Move预测模式更加简单，仅仅是根据障碍物的运动模式进�
 
 
 最终总结Predictor的作用：根据LaneSequence的概率，以及预先规划好的ADCTrajectory对LaneSequence进行筛选，去掉那些不合理的行驶方案，最后得到一些短时间轨迹的集合。
+
+**从参数FLAGS_prediction_duration(默认5.0s)和FLAGS_prediction_period(默认0.1s)，可以看到，Prediction模块其实是对障碍物未来5s内的运动状态进行预测，每0.1s进行一次位置的采样。**
