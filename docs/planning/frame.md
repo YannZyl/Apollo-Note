@@ -1,9 +1,10 @@
-# 障碍物&主车轨迹处理器：Frame类
+# 障碍物&参考线&交通规则融合器：Frame类
 
-在Frame类中，主要的工作还是对障碍物预测轨迹(由Predition模块得到的未来5s内障碍物运动轨迹)和无人车运动轨迹(ReferenceLineProvider类提供)进行融合，确定障碍物和无人车的位置关系，包括横向距离，纵向距离，车辆可以前进到的位置等等信息。在这里我们主要关注两个内容：
+在Frame类中，主要的工作还是对障碍物预测轨迹(由Predition模块得到的未来5s内障碍物运动轨迹)、无人车参考线(ReferenceLineProvider类提供)以及当前路况(停车标志、人行横道、减速带等)信息进行融合。结合路况和障碍物轨迹，最后会给每个障碍物一个标签，这个标签表示该障碍物存在情况下对无人车的影响，例如有些障碍物可忽略，有些障碍物会超车，有些障碍物在运动过程中无人车需要停车等：
 
 1. 障碍物信息的获取策略
 2. 无人车参考线ReferenceLineInof初始化(加入障碍物轨迹信息)
+3. 依据交通规则对障碍物设定标签
 
 # 一. 障碍物信息的获取策略--滞后预测(Lagged Prediction)
 
@@ -411,3 +412,507 @@ Step 4. 计算完所有障碍物轨迹段的上下界框以后，根据时间t�
     return false;
   }
 ```
+
+总结一下**无人车参考线ReferenceLineInof初始化(加入障碍物轨迹信息)**这步的功能，给定了无人车的规划轨迹ReferenceLine和障碍物的预测轨迹PredictionObstacles，这个过程其实就是计算障碍物在无人车规划轨迹上的重叠部分的位置s，以及驶到这个重叠部分的时间点t，为第三部分每个障碍物在每个车辆上的初步决策进行规划。
+
+# 三. 依据交通规则对障碍物设定标签
+
+二中已经给出了每个障碍物在所有的参考线上的重叠部分的位置与时间点，这些重叠部分就是无人车需要考虑的规划矫正问题，防止交通事故。因为障碍物运动可能跨越多个ReferenceLine，所以这里需要对于每个障碍物进行标定，是否可忽略，是否会超车等。交通规则判定情况一共11种，在文件`modules/planning/conf/traffic_rule_config.pb.txt`中定义，这里我们将一一列举。
+
+1. 后车情况处理--BACKSIDE_VEHICLE
+2. 变道情况处理--CHANGE_LANE
+3. 人行横道情况处理--CROSSWALK
+4. 目的地情况处理--DESTINATION
+5. 前车情况处理--FRONT_VEHICLE
+6. 禁停区情况处理--KEEP_CLEAR
+7. 寻找停车点状态--PULL_OVER
+8. 车道线结束情况处理--REFERENCE_LINE_END
+9. 重新路由查询情况处理--REROUTING
+10. 信号灯情况处理--SIGNAL_LIGHT
+11. 停车情况处理--STOP_SIGN
+
+```c++
+/// file in apollo/modules/planning/planning.cc
+void Planning::RunOnce() {
+  const uint32_t frame_num = AdapterManager::GetPlanning()->GetSeqNum() + 1;
+  status = InitFrame(frame_num, stitching_trajectory.back(), start_timestamp, vehicle_state);
+
+  for (auto& ref_line_info : frame_->reference_line_info()) {
+    TrafficDecider traffic_decider;
+    traffic_decider.Init(traffic_rule_configs_);
+    auto traffic_status = traffic_decider.Execute(frame_.get(), &ref_line_info);
+    if (!traffic_status.ok() || !ref_line_info.IsDrivable()) {
+      ref_line_info.SetDrivable(false);
+      continue;
+    }
+  }
+}
+
+/// file in apollo/modules/planning/tasks/traffic_decider/traffic_decider.cc
+Status TrafficDecider::Execute(Frame *frame, ReferenceLineInfo *reference_line_info) {
+  for (const auto &rule_config : rule_configs_.config()) {   // 对于每条参考线进行障碍物的决策。
+    if (!rule_config.enabled()) {
+      continue;
+    }
+    auto rule = s_rule_factory.CreateObject(rule_config.rule_id(), rule_config);
+    if (!rule) {
+      continue;
+    }
+    rule->ApplyRule(frame, reference_line_info);
+  }
+
+  BuildPlanningTarget(reference_line_info);
+  return Status::OK();
+}
+```
+
+## 3.1 后车情况处理--BACKSIDE_VEHICLE
+
+```c++
+/// file in apollo/modules/planning/tasks/traffic_decider/backside_vehicle.cc
+Status BacksideVehicle::ApplyRule(Frame* const, ReferenceLineInfo* const reference_line_info) {
+  auto* path_decision = reference_line_info->path_decision();
+  const auto& adc_sl_boundary = reference_line_info->AdcSlBoundary();
+  if (reference_line_info->Lanes().IsOnSegment()) {  // The lane keeping reference line.
+    MakeLaneKeepingObstacleDecision(adc_sl_boundary, path_decision);
+  }
+  return Status::OK();
+}
+
+void BacksideVehicle::MakeLaneKeepingObstacleDecision(const SLBoundary& adc_sl_boundary, PathDecision* path_decision) {
+  ObjectDecisionType ignore;   // 从这里可以看到，对于后车的处理主要是忽略
+  ignore.mutable_ignore();
+  const double adc_length_s = adc_sl_boundary.end_s() - adc_sl_boundary.start_s(); // 计算"车长""
+  for (const auto* path_obstacle : path_decision->path_obstacles().Items()) { // 对于每个与参考线有重叠的障碍物进行规则设置
+    ...  
+  }
+}
+```
+
+从上述代码可以看到后车情况处理仅仅针对当前无人车所在的参考线，那些临近的参考线不做考虑。Apollo主要的处理方式其实是忽略后车，可以分一下情况：
+
+- 前车在这里不做考虑，由前车情况处理FRONT_VEHICLE来完成
+
+```c++
+if (path_obstacle->PerceptionSLBoundary().end_s() >= adc_sl_boundary.end_s()) {  // don't ignore such vehicles.
+  continue;
+}
+```
+
+- 参考线上没有障碍物运动轨迹，直接忽略
+
+```c++
+if (path_obstacle->reference_line_st_boundary().IsEmpty()) {
+  path_decision->AddLongitudinalDecision("backside_vehicle/no-st-region", path_obstacle->Id(), ignore);
+  path_decision->AddLateralDecision("backside_vehicle/no-st-region", path_obstacle->Id(), ignore);
+  continue;
+}
+```
+
+- 忽略从无人车后面来的车辆
+
+```c++
+// Ignore the car comes from back of ADC
+if (path_obstacle->reference_line_st_boundary().min_s() < -adc_length_s) {  
+  path_decision->AddLongitudinalDecision("backside_vehicle/st-min-s < adc", path_obstacle->Id(), ignore);
+  path_decision->AddLateralDecision("backside_vehicle/st-min-s < adc", path_obstacle->Id(), ignore);
+  continue;
+}
+```
+
+从代码中可以看到，通过计算min_s，也就是障碍物轨迹距离无人车最近的距离，小于半车长度，说明车辆在无人车后面，可暂时忽略。
+
+- 忽略后面不会超车的车辆
+
+```c++
+const double lane_boundary = config_.backside_vehicle().backside_lane_width();  // 4m
+  if (path_obstacle->PerceptionSLBoundary().start_s() < adc_sl_boundary.end_s()) {
+    if (path_obstacle->PerceptionSLBoundary().start_l() > lane_boundary ||
+        path_obstacle->PerceptionSLBoundary().end_l() < -lane_boundary) {
+      continue;
+    }
+    path_decision->AddLongitudinalDecision("backside_vehicle/sl < adc.end_s", path_obstacle->Id(), ignore);
+    path_decision->AddLateralDecision("backside_vehicle/sl < adc.end_s", path_obstacle->Id(), ignore);
+    continue;
+  }
+}
+```
+
+从代码中可以看到，第一个if可以选择那些在无人车后(至少不超过无人车)的车辆，第二个if，可以计算车辆与无人车的横向距离，如果超过阈值，那么就说明车辆横向距离无人车足够远，有可能会进行超车，这种情况不能忽略，留到后面的交通规则去处理；若小于这个阈值，则可以间接说明不太会超车，后车可能跟随无人车前进。
+
+## 3.2 变道情况处理--CHANGE_LANE
+
+在变道情况下第一步要找到那些需要警惕的障碍物(包括跟随这辆和超车车辆)，这些障碍物轨迹是会影响无人车的变道轨迹，然后设置每个障碍物设立一个超车的警示(障碍物和无人车的位置与速度等信息)供下一步规划阶段参考。Apollo对于每条参考线每次只考虑距离无人车最近的能影响变道的障碍物，同时设置那些超车的障碍物。
+
+```c++
+/// file in apollo/modules/planning/tasks/traffic_decider/change_lane.cc
+Status ChangeLane::ApplyRule(Frame* const frame, ReferenceLineInfo* const reference_line_info) {
+  // 如果是直行道，不需要变道，则忽略
+  if (reference_line_info->Lanes().IsOnSegment()) {
+    return Status::OK();
+  }
+  // 计算警示障碍物&超车障碍物
+  guard_obstacles_.clear();
+  overtake_obstacles_.clear();
+  if (!FilterObstacles(reference_line_info)) {
+    return Status(common::PLANNING_ERROR, "Failed to filter obstacles");
+  }
+  // 创建警示障碍物类
+  if (config_.change_lane().enable_guard_obstacle() && !guard_obstacles_.empty()) {
+    for (const auto path_obstacle : guard_obstacles_) {
+      auto* guard_obstacle = frame->Find(path_obstacle->Id());
+      if (guard_obstacle &&  CreateGuardObstacle(reference_line_info, guard_obstacle)) {
+        AINFO << "Created guard obstacle: " << guard_obstacle->Id();
+      }
+    }
+  }
+  // 设置超车标志
+  if (!overtake_obstacles_.empty()) {
+    auto* path_decision = reference_line_info->path_decision();
+    const auto& reference_line = reference_line_info->reference_line();
+    for (const auto* path_obstacle : overtake_obstacles_) {
+      auto overtake = CreateOvertakeDecision(reference_line, path_obstacle);
+      path_decision->AddLongitudinalDecision(
+          TrafficRuleConfig::RuleId_Name(Id()), path_obstacle->Id(), overtake);
+    }
+  }
+  return Status::OK();
+}
+```
+
+1. 超车&警示障碍物计算
+
+- 没有轨迹的障碍物忽略
+
+```c++
+if (!obstacle->HasTrajectory()) {
+  continue;
+}
+```
+
+- 无人车前方的车辆忽略，对变道没有影响
+
+```c++
+if (path_obstacle->PerceptionSLBoundary().start_s() > adc_sl_boundary.end_s()) {
+  continue;
+}
+```
+
+- 跟车在一定距离(10m)内，将其标记为超车障碍物
+
+```c++
+if (path_obstacle->PerceptionSLBoundary().end_s() <
+        adc_sl_boundary.start_s() -
+            std::max(config_.change_lane().min_overtake_distance(),   // min_overtake_distance: 10m
+                     obstacle->Speed() * min_overtake_time)) {        // min_overtake_time: 2s
+  overtake_obstacles_.push_back(path_obstacle);
+}
+```
+
+- 障碍物速度很小或者障碍物最后不在参考线上，对变道没影响，可忽略
+
+```c++
+if (last_point.v() < config_.change_lane().min_guard_speed()) {
+  continue;
+}
+if (!reference_line.IsOnRoad(last_point.path_point())) {
+  continue;
+}
+```
+
+- 障碍物最后一规划点在参考线上，但是超过了无人车一定距离，对变道无影响
+
+```c++
+SLPoint last_sl;
+if (!reference_line.XYToSL(last_point.path_point(), &last_sl)) {
+  continue;
+}
+if (last_sl.s() < 0 || last_sl.s() > adc_sl_boundary.end_s() + kGuardForwardDistance) {
+  continue;
+}
+```
+
+2. 创建警示障碍物类
+
+创建警示障碍物类本质其实就是预测障碍物未来一段时间内的运动轨迹，代码在`ChangeLane::CreateGuardObstacle`中很明显的给出了障碍物轨迹的预测方法。预测的轨迹是在原始轨迹上进行拼接，即在最后一个轨迹点后面再次进行预测，这次预测的假设是，障碍物沿着参考线形式。几个注意点：
+
+预测长度：障碍物预测轨迹重点到无人车前方100m(`config_.change_lane().guard_distance()`)这段距离
+
+障碍物速度假定：这段距离内，默认障碍物速度和最后一个轨迹点速度一致`extend_v`，并且验证参考线前进
+
+预测频率: 没两个点之间的距离为障碍物长度，所以两个点之间的相对时间差为：`time_delta = kStepDistance / extend_v`
+
+3. 创建障碍物超车标签
+
+```c++
+/// file in apollo/modules/planning/tasks/traffic_decider/change_lane.cc
+ObjectDecisionType ChangeLane::CreateOvertakeDecision(
+    const ReferenceLine& reference_line, const PathObstacle* path_obstacle) const {
+  ObjectDecisionType overtake;
+  overtake.mutable_overtake();
+  const double speed = path_obstacle->obstacle()->Speed();
+  double distance = std::max(speed * config_.change_lane().min_overtake_time(),  // 设置变道过程中，障碍物运动距离
+                             config_.change_lane().min_overtake_distance());
+  overtake.mutable_overtake()->set_distance_s(distance);   
+  double fence_s = path_obstacle->PerceptionSLBoundary().end_s() + distance; 
+  auto point = reference_line.GetReferencePoint(fence_s);               // 设置变道完成后，障碍物在参考线上的位置
+  overtake.mutable_overtake()->set_time_buffer(config_.change_lane().min_overtake_time()); // 设置变道需要的最小时间
+  overtake.mutable_overtake()->set_distance_s(distance);               // 设置变道过程中，障碍物前进的距离
+  overtake.mutable_overtake()->set_fence_heading(point.heading());
+  overtake.mutable_overtake()->mutable_fence_point()->set_x(point.x()); // 设置变道完成后，障碍物的坐标
+  overtake.mutable_overtake()->mutable_fence_point()->set_y(point.y());
+  overtake.mutable_overtake()->mutable_fence_point()->set_z(0.0);
+  return overtake;
+}
+```
+
+## 3.3 人行横道情况处理--CROSSWALK
+
+对于人行横道部分，根据礼让规则当行人或者非机动车距离很远，无人车可以开过人行横道；当人行横道上有人经过时，必须停车让行。
+
+```c++
+/// file in apollo/modules/planning/tasks/traffic_decider/crosswalk.cc
+Status Crosswalk::ApplyRule(Frame* const frame, ReferenceLineInfo* const reference_line_info) {
+  // 检查是否存在人行横道区域
+  if (!FindCrosswalks(reference_line_info)) {
+    return Status::OK();
+  }
+  // 为每个障碍物做标记，障碍物存在时，无人车应该停车还是直接驶过
+  MakeDecisions(frame, reference_line_info);
+  return Status::OK();
+}
+```
+
+1. 检查在每个人行横道区域内，是否存在障碍物需要无人车停车让行
+
+- 如果车辆已经驶过人行横道一部分了，那么就忽略，不需要停车
+
+```c++
+// skip crosswalk if master vehicle body already passes the stop line
+double stop_line_end_s = crosswalk_overlap->end_s;    
+if (adc_front_edge_s - stop_line_end_s > config_.crosswalk().min_pass_s_distance()) {  // 车头驶过人行横道一定距离，min_pass_s_distance：1.0
+  continue;
+}
+```
+
+遍历每个人行道区域的障碍物(行人和非机动车)，并将人行横道区域扩展，提高安全性。
+
+- 如果障碍物不在扩展后的人行横道内，则忽略。(可能在路边或者其他区域)
+
+```C++
+// expand crosswalk polygon
+// note: crosswalk expanded area will include sideway area
+Vec2d point(perception_obstacle.position().x(),
+            perception_obstacle.position().y());
+const Polygon2d crosswalk_poly = crosswalk_ptr->polygon();
+bool in_crosswalk = crosswalk_poly.IsPointIn(point);
+const Polygon2d crosswalk_exp_poly = crosswalk_poly.ExpandByDistance(
+         config_.crosswalk().expand_s_distance());
+bool in_expanded_crosswalk = crosswalk_exp_poly.IsPointIn(point);
+
+if (!in_expanded_crosswalk) {
+  continue;
+}
+```
+
+计算障碍物到参考线的横向距离`obstacle_l_distance `，是否在参考线上(附近)`is_on_road `，障碍物轨迹是否与参考线相交`is_path_cross `
+
+- 如果横向距离大于疏松距离。如果轨迹相交，那么需要停车；反之直接驶过(此时轨迹相交无所谓，因为横向距离比较远)
+
+```c++
+if (obstacle_l_distance >= config_.crosswalk().stop_loose_l_distance()) {  // stop_loose_l_distance: 5.0m
+  // (1) when obstacle_l_distance is big enough(>= loose_l_distance),  
+  //     STOP only if path crosses
+  if (is_path_cross) {
+    stop = true;
+  }
+}
+```
+
+- 如果横向距离小于紧凑距离。如果障碍物在参考线或者轨迹相交，那么需要停车；反之直接驶过
+
+```c++
+else if (obstacle_l_distance <= config_.crosswalk().stop_strick_l_distance()) { // stop_strick_l_distance: 4.0m
+  // (2) when l_distance <= strick_l_distance + on_road(not on sideway),
+  //     always STOP
+  // (3) when l_distance <= strick_l_distance + not on_road(on sideway),
+  //     STOP only if path crosses
+  if (is_on_road || is_path_cross) {
+    stop = true;
+  }
+} 
+```
+
+- 如果横向距离在紧凑距离和疏松距离之间，直接停车
+
+```c++
+else {
+  // TODO(all)
+  // (4) when l_distance is between loose_l and strick_l
+  //     use history decision of this crosswalk to smooth unsteadiness
+  stop = true;
+}
+```
+
+如果存在障碍物需要无人车停车让行，最后可以计算无人车的加速度(是否来的及减速，若无人车速度很快减速不了，那么干脆直接驶过)。计算加速的公式还是比较简单
+
+$$ 0 - v^2 = 2as $$
+
+s为当前到车辆停止驶过的距离，物理公式，由函数`util::GetADCStopDeceleration`完成。
+
+2. 对那些影响无人车行驶的障碍物构建虚拟墙障碍物类以及设置停车标签
+
+什么是构建虚拟墙类，其实很简单，单一的障碍物是一个很小的框，那么无人车在行驶过程中必须要与障碍物保持一定的距离，那么只要以障碍物为中心，构建一个长度为0.1，宽度为车道宽度的虚拟墙，只要保证无人车和这个虚拟墙障碍物不相交，就能确保安全。
+
+```c++
+// create virtual stop wall
+std::string virtual_obstacle_id =
+      CROSSWALK_VO_ID_PREFIX + crosswalk_overlap->object_id;
+auto* obstacle = frame->CreateStopObstacle(
+      reference_line_info, virtual_obstacle_id, crosswalk_overlap->start_s);
+if (!obstacle) {
+  AERROR << "Failed to create obstacle[" << virtual_obstacle_id << "]";
+  return -1;
+}
+PathObstacle* stop_wall = reference_line_info->AddObstacle(obstacle);
+if (!stop_wall) {
+  AERROR << "Failed to create path_obstacle for: " << virtual_obstacle_id;
+  return -1;
+}
+```
+
+虽然看起来函数跳转比较多，但是其实与二中的障碍物PredictionObstacle封装成Obstacle一样，无非是多加了一个区域框Box2d而已。最后就是对这些虚拟墙添加停车标志
+
+```c++
+// build stop decision
+const double stop_s =         // 计算停车位置的累计距离，stop_distance：1m，人行横道前1m处停车
+      crosswalk_overlap->start_s - config_.crosswalk().stop_distance();
+auto stop_point = reference_line.GetReferencePoint(stop_s);
+double stop_heading = reference_line.GetReferencePoint(stop_s).heading();
+
+ObjectDecisionType stop;
+auto stop_decision = stop.mutable_stop();
+stop_decision->set_reason_code(StopReasonCode::STOP_REASON_CROSSWALK);
+stop_decision->set_distance_s(-config_.crosswalk().stop_distance());
+stop_decision->set_stop_heading(stop_heading);                 // 设置停车点的角度/方向
+stop_decision->mutable_stop_point()->set_x(stop_point.x());    // 设置停车点的坐标
+stop_decision->mutable_stop_point()->set_y(stop_point.y());
+stop_decision->mutable_stop_point()->set_z(0.0);
+
+for (auto pedestrian : pedestrians) {
+  stop_decision->add_wait_for_obstacle(pedestrian);  // 设置促使无人车停车的障碍物id
+}
+
+auto* path_decision = reference_line_info->path_decision();
+path_decision->AddLongitudinalDecision(   
+      TrafficRuleConfig::RuleId_Name(config_.rule_id()), stop_wall->Id(), stop);
+```
+
+## 3.4 目的地情况处理--DESTINATION
+
+到达目的地情况下，障碍物促使无人车采取的行动无非是靠边停车或者寻找合适的停车点(距离目的地还有一小段距离，不需要激励停车)。决策规则比较简单：
+
+1. 主要的决策逻辑
+
+- 若当前正处于PULL_OVER状态，则继续保持
+
+```c++
+auto* planning_state = GetPlanningStatus()->mutable_planning_state();
+if (planning_state->has_pull_over() && planning_state->pull_over().in_pull_over()) {
+  PullOver(nullptr);
+  ADEBUG << "destination: continue PULL OVER";
+  return 0;
+}
+```
+
+- 检查车辆当前是否需要进入ULL_OVER，主要参考和目的地之间的距离以及是否允许使用PULL_OVER
+
+```c++
+const auto& routing = AdapterManager::GetRoutingResponse()->GetLatestObserved();
+const auto& routing_end = *routing.routing_request().waypoint().rbegin();
+double dest_lane_s = std::max(       // stop_distance: 0.5，目的地0.5m前停车
+      0.0, routing_end.s() - FLAGS_virtual_stop_wall_length -
+      config_.destination().stop_distance()); 
+common::PointENU dest_point;
+if (CheckPullOver(reference_line_info, routing_end.id(), dest_lane_s, &dest_point)) {
+  PullOver(&dest_point);
+} else {
+  Stop(frame, reference_line_info, routing_end.id(), dest_lane_s);
+}
+```
+
+2. CheckPullOver检查机制(Apollo在DESTINATION中不启用PULL_OVER)
+
+- 若在目的地情况下不启用PULL_OVER机制，则返回false
+
+```c++
+if (!config_.destination().enable_pull_over()) {
+  return false;
+}
+```
+
+- 若目的地不在参考线上，返回false
+
+```c++
+const auto dest_lane = HDMapUtil::BaseMapPtr()->GetLaneById(hdmap::MakeMapId(lane_id));
+const auto& reference_line = reference_line_info->reference_line();
+// check dest OnRoad
+double dest_lane_s = std::max(
+    0.0, lane_s - FLAGS_virtual_stop_wall_length -
+    config_.destination().stop_distance());
+*dest_point = dest_lane->GetSmoothPoint(dest_lane_s);
+if (!reference_line.IsOnRoad(*dest_point)) {
+  return false;
+}
+```
+
+- 若无人车与目的地距离太远，则返回false
+
+```c++
+// check dest within pull_over_plan_distance
+common::SLPoint dest_sl;
+if (!reference_line.XYToSL({dest_point->x(), dest_point->y()}, &dest_sl)) {
+  return false;
+}
+double adc_front_edge_s = reference_line_info->AdcSlBoundary().end_s();
+double distance_to_dest = dest_sl.s() - adc_front_edge_s;
+// pull_over_plan_distance: 55m
+if (distance_to_dest > config_.destination().pull_over_plan_distance()) {
+  // to far, not sending pull-over yet
+  return false;
+}
+```
+
+3. 障碍物PULL_OVER和STOP标签设定
+
+```c++
+int Destination::PullOver(common::PointENU* const dest_point) {
+  auto* planning_state = GetPlanningStatus()->mutable_planning_state();
+  if (!planning_state->has_pull_over() || !planning_state->pull_over().in_pull_over()) {
+    planning_state->clear_pull_over();
+    auto pull_over = planning_state->mutable_pull_over();
+    pull_over->set_in_pull_over(true);
+    pull_over->set_reason(PullOverStatus::DESTINATION);
+    pull_over->set_status_set_time(Clock::NowInSeconds());
+
+    if (dest_point) {
+      pull_over->mutable_inlane_dest_point()->set_x(dest_point->x());
+      pull_over->mutable_inlane_dest_point()->set_y(dest_point->y());
+    }
+  }
+  return 0;
+}
+```
+
+Stop标签设定和**人行横道情况处理-**中STOP一致，创建虚拟墙，并封装成新的PathObstacle加入该ReferenceLineInfo的PathDecision中。
+
+## 3.5 前车情况处理--FRONT_VEHICLE
+
+
+
+6. 禁停区情况处理--KEEP_CLEAR
+7. 寻找停车点状态--PULL_OVER
+8. 车道线结束情况处理--REFERENCE_LINE_END
+9. 重新路由查询情况处理--REROUTING
+10. 信号灯情况处理--SIGNAL_LIGHT
+11. 停车情况处理--STOP_SIGN
