@@ -904,11 +904,183 @@ int Destination::PullOver(common::PointENU* const dest_point) {
 }
 ```
 
-Stop标签设定和**人行横道情况处理-**中STOP一致，创建虚拟墙，并封装成新的PathObstacle加入该ReferenceLineInfo的PathDecision中。
+Stop标签设定和**人行横道情况处理**中STOP一致，创建虚拟墙，并封装成新的PathObstacle加入该ReferenceLineInfo的PathDecision中。
 
 ## 3.5 前车情况处理--FRONT_VEHICLE
 
+在存在前车的情况下，障碍物对无人车的决策影响有两个，一是跟车等待机会超车(也有可能一直跟车，视障碍物信息决定)；而是停车(障碍物是静态的，无人车必须停车)
 
+1. 跟车等待机会超车处理
+
+当前车是运动的，而且超车条件良好，那么就存在超车的可能，这里定义的超车指代的需要无人车调整横向距离以后超车，直接驶过前方障碍物的属于正常行驶，可忽略障碍物。要完成超车行为需要经过4个步骤：
+
+- 正常驾驶(DRIVE)
+- 等待超车(WAIT)
+- 超车(SIDEPASS)
+- 正常行驶(DRIVE)
+
+若距离前过远，那么无人车就处理第一个阶段正常行驶，若距离比较近，但是不满足超车条件，那么无人车将一直跟随前车正常行驶；若距离近但是无量速度很小(堵车)，那么就需要等待；若满足条件了，就立即进入到超车过程，超车完成就又回到正常行驶状态。
+
+Step 1. 检查超车条件--`FrontVehicle::FindPassableObstacle`
+
+这个过程其实就是寻找有没有影响无人车正常行驶的障碍物(无人车可能需要超车)，遍历PathDecision中的所有PathObstacle，依次检查以下条件：
+
+- 是否是虚拟或者静态障碍物。若是，那么就需要采取停车策略，超车部分对这些不作处理
+
+```c++
+if (path_obstacle->obstacle()->IsVirtual() || !path_obstacle->obstacle()->IsStatic()) {
+  ADEBUG << "obstacle_id[" << obstacle_id << "] type[" << obstacle_type_name
+        << "] VIRTUAL or NOT STATIC. SKIP";
+  continue;
+}
+```
+
+- 检车障碍物与无人车位置关系，障碍物在无人车后方，直接忽略。
+
+```c++
+const auto& obstacle_sl = path_obstacle->PerceptionSLBoundary();
+if (obstacle_sl.start_s() <= adc_sl_boundary.end_s()) {
+  ADEBUG << "obstacle_id[" << obstacle_id << "] type[" << obstacle_type_name
+         << "] behind ADC. SKIP";
+  continue;
+}
+```
+
+- 检查横向与纵向距离，若纵向距离过远则可以忽略，依旧进行正常行驶；若侧方距离过大，可直接忽略障碍物，直接正常向前行驶。
+
+```c++
+const double side_pass_s_threshold = config_.front_vehicle().side_pass_s_threshold(); // side_pass_s_threshold: 15m
+if (obstacle_sl.start_s() - adc_sl_boundary.end_s() > side_pass_s_threshold) {
+  continue;
+}
+const double side_pass_l_threshold = config_.front_vehicle().side_pass_l_threshold(); // side_pass_l_threshold: 1m
+if (obstacle_sl.start_l() > side_pass_l_threshold || 
+    obstacle_sl.end_l() < -side_pass_l_threshold) {
+    continue;
+}
+```
+
+`FrontVehicle::FindPassableObstacle`函数最后会返回第一个找到的限制无人车行驶的障碍物
+
+Step 2. 设定超车各阶段标志--`FrontVehicle::ProcessSidePass`
+
+- 若上阶段处于SidePassStatus::UNKNOWN状态，设置为正常行驶
+
+- 若上阶段处于SidePassStatus::DRIVE状态，并且障碍物阻塞(存在需要超车条件)，那么设置为等待超车；否则前方没有障碍物，继续正常行驶
+
+```c++
+case SidePassStatus::DRIVE: {
+  constexpr double kAdcStopSpeedThreshold = 0.1;  // unit: m/s
+  const auto& adc_planning_point = reference_line_info->AdcPlanningPoint();
+  if (!passable_obstacle_id.empty() &&            // 前方有障碍物则需要等待
+      adc_planning_point.v() < kAdcStopSpeedThreshold) {
+    sidepass_status->set_status(SidePassStatus::WAIT);
+    sidepass_status->set_wait_start_time(Clock::NowInSeconds());
+  }
+  break;
+}
+```
+
+- 若上阶段处于SidePassStatus::WAIT状态，若前方已无障碍物，设置为正常行驶；否则视情况而定：
+
+a. 前方已无妨碍物，设置为正常行驶
+
+b. 前方有障碍物，检查已等待的时间，超过阈值，寻找左右有效车道超车；若无有效车道，则一直堵车等待。
+
+```c++
+double wait_start_time = sidepass_status->wait_start_time();   
+double wait_time = Clock::NowInSeconds() - wait_start_time;  // 计算已等待的时间
+
+if (wait_time > config_.front_vehicle().side_pass_wait_time()) { // 超过阈值，寻找其他车道超车。side_pass_wait_time：30s
+}
+```
+
+首先查询HDMap，计算当前ReferenceLine所在的车道Lane。若存在坐车道，那么设置做超车；若不存在坐车道，那么检查右车道，右车道如果是机动车道(CITY_DRIVING)，不是非机动车道(BIKING)，不是步行街(SIDEWALK)，也不是停车道(PAKING)，那么可以进行右超车。
+
+```c++
+if (enter_sidepass_mode) {
+  sidepass_status->set_status(SidePassStatus::SIDEPASS);
+  sidepass_status->set_pass_obstacle_id(passable_obstacle_id);
+  sidepass_status->clear_wait_start_time();
+  sidepass_status->set_pass_side(side);   // side知识左超车还是右超车。取值为ObjectSidePass::RIGHT或ObjectSidePass::LEFT
+}
+```
+
+- 若上阶段处于SidePassStatus::SIDEPASS状态，若前方已无障碍物，设置为正常行驶；反之继续处于超车过程。
+
+```c++
+case SidePassStatus::SIDEPASS: {
+  if (passable_obstacle_id.empty()) {
+    sidepass_status->set_status(SidePassStatus::DRIVE);
+  }
+  break;
+}
+```
+
+2. 停车处理
+
+- 首先检查障碍物是不是静止物体(非1中的堵车情况)。若是虚拟的或者动态障碍物，则忽略，由超车模块处理
+
+```c++
+if (path_obstacle->obstacle()->IsVirtual() || !path_obstacle->obstacle()->IsStatic()) {
+  continue;
+}
+```
+
+- 检查障碍物和无人车位置，若障碍物在无人车后，忽略，由后车模块处理
+
+```c++
+const auto& obstacle_sl = path_obstacle->PerceptionSLBoundary();
+if (obstacle_sl.end_s() <= adc_sl.start_s()) {
+    continue;
+}
+```
+
+- 障碍物已经在超车模块中被标记，迫使无人车超车，那么此时就不需要考虑该障碍物
+
+```c++
+// check SIDE_PASS decision
+if (path_obstacle->LateralDecision().has_sidepass()) {
+  continue;
+}
+```
+
+- 检查是否必须要停车条件，车道没有足够的宽度来允许无人车超车
+
+```c++
+double left_width = 0.0;
+double right_width = 0.0;
+reference_line.GetLaneWidth(obstacle_sl.start_s(), &left_width, &right_width);
+
+double left_driving_width = left_width - obstacle_sl.end_l() -           // 计算障碍物左侧空余距离
+                                config_.front_vehicle().nudge_l_buffer();
+double right_driving_width = right_width + obstacle_sl.start_l() -       // 计算障碍物右侧空余距离，+号是因为车道线FLU坐标系左侧l是负轴，右侧是正轴
+                                 config_.front_vehicle().nudge_l_buffer();
+if ((left_driving_width < adc_width && right_driving_width < adc_width) ||
+        (obstacle_sl.start_l() <= 0.0 && obstacle_sl.end_l() >= 0.0)) {
+  // build stop decision
+  double stop_distance = path_obstacle->MinRadiusStopDistance(vehicle_param);
+  const double stop_s = obstacle_sl.start_s() - stop_distance;
+  auto stop_point = reference_line.GetReferencePoint(stop_s);
+  double stop_heading = reference_line.GetReferencePoint(stop_s).heading();
+
+  ObjectDecisionType stop;
+  auto stop_decision = stop.mutable_stop();
+  if (obstacle_type == PerceptionObstacle::UNKNOWN_MOVABLE ||
+      obstacle_type == PerceptionObstacle::BICYCLE ||
+      obstacle_type == PerceptionObstacle::VEHICLE) {
+    stop_decision->set_reason_code(StopReasonCode::STOP_REASON_HEAD_VEHICLE);
+  } else {
+      stop_decision->set_reason_code(StopReasonCode::STOP_REASON_OBSTACLE);
+  }
+  stop_decision->set_distance_s(-stop_distance);
+  stop_decision->set_stop_heading(stop_heading);
+  stop_decision->mutable_stop_point()->set_x(stop_point.x());
+  stop_decision->mutable_stop_point()->set_y(stop_point.y());
+  stop_decision->mutable_stop_point()->set_z(0.0);
+  path_decision->AddLongitudinalDecision("front_vehicle", path_obstacle->Id(), stop);
+}
+```
 
 6. 禁停区情况处理--KEEP_CLEAR
 7. 寻找停车点状态--PULL_OVER
