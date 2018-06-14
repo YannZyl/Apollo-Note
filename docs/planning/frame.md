@@ -1,10 +1,26 @@
 # 障碍物&参考线&交通规则融合器：Frame类
 
-在Frame类中，主要的工作还是对障碍物预测轨迹(由Predition模块得到的未来5s内障碍物运动轨迹)、无人车参考线(ReferenceLineProvider类提供)以及当前路况(停车标志、人行横道、减速带等)信息进行融合。结合路况和障碍物轨迹，最后会给每个障碍物一个标签，这个标签表示该障碍物存在情况下对无人车的影响，例如有些障碍物可忽略，有些障碍物会超车，有些障碍物在运动过程中无人车需要停车等：
+在Frame类中，主要的工作还是对障碍物预测轨迹(由Predition模块得到的未来5s内障碍物运动轨迹)、无人车参考线(ReferenceLineProvider类提供)以及当前路况(停车标志、人行横道、减速带等)信息进行融合。
+
+实际情况下，能影响无人车运动的不一定只有障碍物，同时还有各个路况，举个例子：
+
+a. 障碍物影响
+
+情况1：无人车车后的障碍物，对无人车没太大影响，可以忽略
+
+情况2：无人车前面存在障碍物，无人车就需要停车或者超车
+
+b. 路况影响
+
+情况3：前方存在禁停区或者交叉路口(不考虑信号灯)，那么无人车在参考线上行驶，禁停区区域不能停车
+
+情况4：前方存在人行横道，若有人，那么需要停车；若没人，那么无人车可以驶过
+
+所以综上所述，其实这章节最重要的工作就是结合路况和障碍物轨迹，给每个障碍物(为了保持一致，路况也需要封装成障碍物形式)一个标签，这个标签表示该障碍物存在情况下对无人车的影响，例如有些障碍物可忽略，有些障碍物会促使无人车超车，有些障碍物促使无人车需要停车等。
 
 1. 障碍物信息的获取策略
-2. 无人车参考线ReferenceLineInof初始化(加入障碍物轨迹信息)
-3. 依据交通规则对障碍物设定标签
+2. 无人车参考线ReferenceLineInof初始化(感知模块障碍物获取)
+3. 依据交通规则对障碍物设定标签(原始感知障碍物&&路况障碍物)
 
 # 一. 障碍物信息的获取策略--滞后预测(Lagged Prediction)
 
@@ -1082,8 +1098,195 @@ if ((left_driving_width < adc_width && right_driving_width < adc_width) ||
 }
 ```
 
-6. 禁停区情况处理--KEEP_CLEAR
-7. 寻找停车点状态--PULL_OVER
+## 3.6 禁停区情况处理--KEEP_CLEAR
+
+禁停区分为两类，第一类是传统的禁停区，第二类是交叉路口。那么对于禁停区做的处理和对于人行横道上障碍物构建虚拟墙很相似。具体做法是在参考线上构建一块禁停区，从纵向的start_s到end_s(这里的start_s和end_s是禁停区start_s和end_s在参考线上的投影点)。禁停区宽度是参考线的道路宽。
+
+具体的处理情况为(禁停区和交叉路口处理一致)：
+
+1. 检查无人车是否已经驶入禁停区或者交叉路口，是则可直接忽略。
+
+```c++
+// check
+const double adc_front_edge_s = reference_line_info->AdcSlBoundary().end_s();
+if (adc_front_edge_s - keep_clear_overlap->start_s >
+      config_.keep_clear().min_pass_s_distance()) { // min_pass_s_distance：2.0m
+  return false;
+}
+```
+
+2. 创建新的禁停区障碍物，并且打上标签为不能停车
+
+```c++
+// create virtual static obstacle
+auto* obstacle = frame->CreateStaticObstacle(
+  reference_line_info, virtual_obstacle_id, keep_clear_overlap->start_s,
+  keep_clear_overlap->end_s);
+if (!obstacle) {
+  return false;
+}
+auto* path_obstacle = reference_line_info->AddObstacle(obstacle);
+if (!path_obstacle) {
+  return false;
+}
+path_obstacle->SetReferenceLineStBoundaryType(StBoundary::BoundaryType::KEEP_CLEAR);
+```
+
+这里额外补充一下创建禁停区障碍物流程，主要还是计算禁停区障碍物的标定框，即center和length，width
+
+```c++
+/// file in apollo/modules/planning/common/frame.cc
+const Obstacle *Frame::CreateStaticObstacle(
+    ReferenceLineInfo *const reference_line_info,
+    const std::string &obstacle_id,
+    const double obstacle_start_s,
+    const double obstacle_end_s) {
+  const auto &reference_line = reference_line_info->reference_line();
+  // 计算禁停区障碍物start_xy，需要映射到ReferenceLine
+  common::SLPoint sl_point;
+  sl_point.set_s(obstacle_start_s);
+  sl_point.set_l(0.0);
+  common::math::Vec2d obstacle_start_xy;
+  if (!reference_line.SLToXY(sl_point, &obstacle_start_xy)) {
+    return nullptr;
+  }
+  // 计算禁停区障碍物end_xy，需要映射到ReferenceLine
+  sl_point.set_s(obstacle_end_s);
+  sl_point.set_l(0.0);
+  common::math::Vec2d obstacle_end_xy;
+  if (!reference_line.SLToXY(sl_point, &obstacle_end_xy)) {
+    return nullptr;
+  }
+  // 计算禁停区障碍物左侧宽度和右侧宽度，与参考线一致
+  double left_lane_width = 0.0;
+  double right_lane_width = 0.0;
+  if (!reference_line.GetLaneWidth(obstacle_start_s, &left_lane_width, &right_lane_width)) {
+    return nullptr;
+  }
+  // 最终可以得到禁停区障碍物的标定框
+  common::math::Box2d obstacle_box{
+      common::math::LineSegment2d(obstacle_start_xy, obstacle_end_xy),
+      left_lane_width + right_lane_width};
+  // CreateStaticVirtualObstacle函数是将禁停区障碍物封装成PathObstacle放入PathDecision中
+  return CreateStaticVirtualObstacle(obstacle_id, obstacle_box);
+}
+```
+
+## 3.7 寻找停车点状态--PULL_OVER
+
+寻找停车点本质上是寻找停车的位置，如果当前已经有停车位置(也就是上个状态就是PULL_OVER)，那么就只需要更新状态信息即可；若不存在，那么就需要计算停车点的位置，然后构建停车区障碍物(同人行横道虚拟墙障碍物和禁停区障碍物)，然后创建障碍物的PULL_OVER标签。
+
+```c++
+Status PullOver::ApplyRule(Frame* const frame, ReferenceLineInfo* const reference_line_info) {
+  frame_ = frame;
+  reference_line_info_ = reference_line_info;
+  if (!IsPullOver()) {
+    return Status::OK();
+  }
+  // 检查上时刻是不是PULL_OVER，如果是PULL_OVER，那么说明已经有停车点stop_point
+  if (CheckPullOverComplete()) {
+    return Status::OK();
+  }
+  common::PointENU stop_point;
+  if (GetPullOverStop(&stop_point) != 0) {   // 获取停车位置失败，无人车将在距离终点的车道上进行停车
+    BuildInLaneStop(stop_point);
+    ADEBUG << "Could not find a safe pull over point. STOP in-lane";
+  } else {
+    BuildPullOverStop(stop_point);           // 获取停车位置成功，无人车将在距离终点的车道上靠边进行停车
+  }
+  return Status::OK();
+}
+```
+
+代码也是比较容易理解，这里我们挑几个要点象征性的解释一下
+
+1. 获取停车点--`GetPullOverStop`函数
+
+- 如果状态信息中已经存在了停车点位置并且有效，那么就可以直接拿来用
+
+```c++
+if (pull_over_status.has_start_point() && pull_over_status.has_stop_point()) {
+    // reuse existing/previously-set stop point
+    stop_point->set_x(pull_over_status.stop_point().x());
+    stop_point->set_y(pull_over_status.stop_point().y());
+}
+```
+
+- 如果不存在，那么就需要寻找停车位置--`FindPullOverStop`函数
+
+停车位置需要在目的地点前`PARKING_SPOT_LONGITUDINAL_BUFFER`(默认1m)，距离路测`buffer_to_boundary`(默认0.5m)处停车。但是停车条件必须满足在路的最边上，也就意味着这条lane的右侧lane不能是机动车道(CITY_DRIVING)。Apollo采用的方法为采样检测，从车头到终点位置，每隔kDistanceUnit(默认5m)进行一次停车条件检查，满足则直接停车。
+
+```c++
+int PullOver::FindPullOverStop(PointENU* stop_point) {
+  const auto& reference_line = reference_line_info_->reference_line();
+  const double adc_front_edge_s = reference_line_info_->AdcSlBoundary().end_s();
+
+  double check_length = 0.0;
+  double total_check_length = 0.0;
+  double check_s = adc_front_edge_s;      // check_s为当前车辆车头的累计距离
+
+  constexpr double kDistanceUnit = 5.0;
+  while (check_s < reference_line.Length() &&    // 在当前车道上，向前采样方式进行停车位置检索，前向检索距离不超过max_check_distance(默认60m)
+      total_check_length < config_.pull_over().max_check_distance()) {
+    check_s += kDistanceUnit;
+    total_check_length += kDistanceUnit;
+    ...
+  }
+}
+```
+
+检查该点(check_s)位置右车道，如果右车道还是机动车道，那么改点不能停车，至少需要变道，继续前向搜索。
+
+```c++
+// check rightmost driving lane:
+//   NONE/CITY_DRIVING/BIKING/SIDEWALK/PARKING
+bool rightmost_driving_lane = true;
+for (auto& neighbor_lane_id : lane->lane().right_neighbor_forward_lane_id()) {   // 
+  const auto neighbor_lane = HDMapUtil::BaseMapPtr()->GetLaneById(neighbor_lane_id);
+  ...
+  const auto& lane_type = neighbor_lane->lane().type();
+  if (lane_type == hdmap::Lane::CITY_DRIVING) {   // 
+    rightmost_driving_lane = false;
+    break;
+  }
+}
+if (!rightmost_driving_lane) {
+  check_length = 0.0;
+  continue;
+}
+```
+
+如果右侧车道不是机动车道，那么路测允许停车。停车位置需要在目的地点前`PARKING_SPOT_LONGITUDINAL_BUFFER`(默认1m)，距离路测`buffer_to_boundary`(默认0.5m)处停车。纵向与停车点的距离以车头为基准；侧方与停车点距离取{车头距离车道边线，车尾距离车道边线，车身中心距离车道边线}距离最小值为基准。
+
+```c++
+// all the lane checks have passed
+check_length += kDistanceUnit;
+if (check_length >= config_.pull_over().plan_distance()) {
+  PointENU point;
+  // check corresponding parking_spot
+  if (FindPullOverStop(check_s, &point) != 0) {
+    // parking_spot not valid/available
+    check_length = 0.0;
+    continue;
+  }
+
+  stop_point->set_x(point.x());
+  stop_point->set_y(point.y());
+  return 0;
+}
+```
+
+2. 在1中如果找到了停车位置，那么就直接对停车位置构建一个PathObstacle，然后设置他的标签Stop即可。创建停车区障碍物的方式跟上述一样，这里也不重复讲解。该功能由函数`BuildPullOverStop`完成。
+
+3. 在1中如果找不到停车位置，那么就去寻找历史状态中的数据，距离包含
+
+- 先去寻找历史数据的inlane_dest_point，也就是历史数据是否允许在车道上停车
+- 如果没找到，那么去寻找停车位置，如果找到了就可以进行2中的停车
+- 如果仍然没找到停车位置，去寻找类中使用过的inlane_adc_potiion_stop_point_，如果找到了可以进行2中的停车
+- 如果依旧没找到那么只能强行在距离终点plan_distance处，在车道上强行停车，并更新inlane_adc_potiion_stop_point_，供下次使用。
+
+
+
 8. 车道线结束情况处理--REFERENCE_LINE_END
 9. 重新路由查询情况处理--REROUTING
 10. 信号灯情况处理--SIGNAL_LIGHT
