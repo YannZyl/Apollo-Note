@@ -442,7 +442,7 @@ Step 4. 计算完所有障碍物轨迹段的上下界框以后，根据时间t�
 5. 前车情况处理--FRONT_VEHICLE
 6. 禁停区情况处理--KEEP_CLEAR
 7. 寻找停车点状态--PULL_OVER
-8. 车道线结束情况处理--REFERENCE_LINE_END
+8. 参考线结束情况处理--REFERENCE_LINE_END
 9. 重新路由查询情况处理--REROUTING
 10. 信号灯情况处理--SIGNAL_LIGHT
 11. 停车情况处理--STOP_SIGN
@@ -1278,16 +1278,379 @@ if (check_length >= config_.pull_over().plan_distance()) {
 
 2. 在1中如果找到了停车位置，那么就直接对停车位置构建一个PathObstacle，然后设置他的标签Stop即可。创建停车区障碍物的方式跟上述一样，这里也不重复讲解。该功能由函数`BuildPullOverStop`完成。
 
-3. 在1中如果找不到停车位置，那么就去寻找历史状态中的数据，距离包含
+3. 在1中如果找不到停车位置，那么就去寻找历史状态中的数据，找到了就根据2中停车，找不到强行在车道上停车。该功能由函数`BuildInLaneStop`完成
 
-- 先去寻找历史数据的inlane_dest_point，也就是历史数据是否允许在车道上停车
+- 先去寻找历史数据的`inlane_dest_point`，也就是历史数据是否允许在车道上停车
 - 如果没找到，那么去寻找停车位置，如果找到了就可以进行2中的停车
-- 如果仍然没找到停车位置，去寻找类中使用过的inlane_adc_potiion_stop_point_，如果找到了可以进行2中的停车
-- 如果依旧没找到那么只能强行在距离终点plan_distance处，在车道上强行停车，并更新inlane_adc_potiion_stop_point_，供下次使用。
+- 如果仍然没找到停车位置，去寻找类中使用过的`inlane_adc_potiion_stop_point_`，如果找到了可以进行2中的停车
+- 如果依旧没找到那么只能强行在距离终点`plan_distance`处，在车道上强行停车，并更新`inlane_adc_potiion_stop_point_`，供下次使用。
 
+## 3.8 参考线结束情况处理--REFERENCE_LINE_END
 
+当参考线结束，一般就需要重新路由查询，所以无人车需要停车，这种情况下如果程序正常，一般是前方没有路了，需要重新查询一点到目的地新的路由，具体的代码也是跟人行横道上的不可忽略障碍物一样，在参考线终点前构建一个停止墙障碍物，并设置齐标签为停车Stop。
 
-8. 车道线结束情况处理--REFERENCE_LINE_END
-9. 重新路由查询情况处理--REROUTING
-10. 信号灯情况处理--SIGNAL_LIGHT
-11. 停车情况处理--STOP_SIGN
+```c++
+Status ReferenceLineEnd::ApplyRule(Frame* frame, ReferenceLineInfo* const reference_line_info) {
+  const auto& reference_line = reference_line_info->reference_line();
+  // 检查参考线剩余的长度，足够则可忽略这个情况，min_reference_line_remain_length：50m
+  double remain_s = reference_line.Length() - reference_line_info->AdcSlBoundary().end_s();
+  if (remain_s > config_.reference_line_end().min_reference_line_remain_length()) {
+    return Status::OK();
+  }
+  // create avirtual stop wall at the end of reference line to stop the adc
+  std::string virtual_obstacle_id =  REF_LINE_END_VO_ID_PREFIX + reference_line_info->Lanes().Id();
+  double obstacle_start_s = reference_line.Length() - 2 * FLAGS_virtual_stop_wall_length; // 在参考线终点前，创建停止墙障碍物
+  auto* obstacle = frame->CreateStopObstacle(reference_line_info, virtual_obstacle_id, obstacle_start_s);
+  if (!obstacle) {
+    return Status(common::PLANNING_ERROR, "Failed to create reference line end obstacle");
+  }
+  PathObstacle* stop_wall = reference_line_info->AddObstacle(obstacle);
+  if (!stop_wall) {
+    return Status(
+        common::PLANNING_ERROR, "Failed to create path obstacle for reference line end obstacle");
+  }
+
+  // build stop decision，设置障碍物停止标签
+  const double stop_line_s = obstacle_start_s - config_.reference_line_end().stop_distance();
+  auto stop_point = reference_line.GetReferencePoint(stop_line_s);
+  ObjectDecisionType stop;
+  auto stop_decision = stop.mutable_stop();
+  stop_decision->set_reason_code(StopReasonCode::STOP_REASON_DESTINATION);
+  stop_decision->set_distance_s(-config_.reference_line_end().stop_distance());
+  stop_decision->set_stop_heading(stop_point.heading());
+  stop_decision->mutable_stop_point()->set_x(stop_point.x());
+  stop_decision->mutable_stop_point()->set_y(stop_point.y());
+  stop_decision->mutable_stop_point()->set_z(0.0);
+
+  auto* path_decision = reference_line_info->path_decision();
+  path_decision->AddLongitudinalDecision(TrafficRuleConfig::RuleId_Name(config_.rule_id()), stop_wall->Id(), stop);
+  return Status::OK();
+}
+
+```
+
+## 3.9 重新路由查询情况处理--REROUTING
+
+根据具体路况进行处理，根据代码可以分为以下情况：
+
+- 若当前参考线为直行，非转弯。那么暂时就不需要重新路由，等待新的路由
+- 若当前车辆不在参考线上，不需要重新路由，等待新的路由
+- 若当前车辆可以退出了，不需要重新路由，等待新的路由
+- 若当前通道Passage终点不在参考线上，不需要重新路由，等待新的路由
+- 若参考线的终点距离无人车过远，不需要重新路由，等待新的路由
+- 若上时刻进行过路由查询，距离当前时间过短，不需要重新路由，等待新的路由
+- 其他情况，手动发起路由查询需求
+
+**其实这个模块我还是有点不是特别敢肯定，只能做保留的解释。首先代码`Frame::Rerouting`做的工作仅仅重新路由，得到当前位置到目的地的一个路况，这个过程并没有产生新的参考线，因为参考线的产生依赖于ReferenceLineProvider线程。所以说对于第二点，车辆不在参考线上，即使重新路由了，但是没有生成矫正的新参考线，所以重新路由也是无用功，反之还不如等待ReferenceLineProvider去申请重新路由并生成对应的参考线。所以说2,3,4等情况的重点在于缺乏参考线，而不在于位置偏离了。**
+
+## 3.10 信号灯情况处理--SIGNAL_LIGHT
+
+信号灯处理相对来说比较简单，无非是有红灯就停车；有黄灯速度小，就停车；有绿灯，或者黄灯速度大就直接驶过。具体的处理步骤分为：
+
+1. 检查当前路况下是否有信号灯区域--由函数`FindValidSignalLight`完成
+
+```c++
+signal_lights_from_path_.clear();
+for (const hdmap::PathOverlap& signal_light : signal_lights) {
+  if (signal_light.start_s + config_.signal_light().min_pass_s_distance() >
+        reference_line_info->AdcSlBoundary().end_s()) {
+    signal_lights_from_path_.push_back(signal_light);
+  }
+}
+```
+
+2. 获取TrafficLight Perception发布的信号等信息--由函数`ReadSignals`完成
+
+```c++
+const TrafficLightDetection& detection =
+      AdapterManager::GetTrafficLightDetection()->GetLatestObserved();
+for (int j = 0; j < detection.traffic_light_size(); j++) {
+  const TrafficLight& signal = detection.traffic_light(j);
+  detected_signals_[signal.id()] = &signal;
+}
+```
+
+3. 决策--由函数`MakeDecisions`完成
+
+```c++
+for (auto& signal_light : signal_lights_from_path_) {
+    // 1. 如果信号灯是红灯，并且加速度不是很大
+    // 2. 如果信号灯是未知，并且加速度不是很大
+    // 3. 如果信号灯是黄灯，并且加速度不是很大
+    // 以上三种情况，无人车停车，停车标签与前面一致
+    if ((signal.color() == TrafficLight::RED &&
+         stop_deceleration < config_.signal_light().max_stop_deceleration()) ||
+        (signal.color() == TrafficLight::UNKNOWN &&
+         stop_deceleration < config_.signal_light().max_stop_deceleration()) ||
+        (signal.color() == TrafficLight::YELLOW &&
+         stop_deceleration < config_.signal_light().max_stop_deacceleration_yellow_light())) {
+      if (BuildStopDecision(frame, reference_line_info, &signal_light)) {
+        has_stop = true;
+        signal_debug->set_is_stop_wall_created(true);
+      }
+    }
+    // 设置交叉口区域，以及是否有权力通行，停车表明无法通行。
+    if (has_stop) {
+      reference_line_info->SetJunctionRightOfWay(signal_light.start_s,
+                                                 false);  // not protected
+    } else {
+      reference_line_info->SetJunctionRightOfWay(signal_light.start_s, true);
+      // is protected
+    }
+  }
+```
+
+## 3.11 停车情况处理--STOP_SIGN
+
+停车情况相对来说比较复杂，根据代码将停车分为：寻找下一个最近的停车信号，决策处理。寻找下一个停车点比较简单，由函数`FindNextStopSign`完成，这里直接跳过。接下来分析决策部分，可以分为以下几步：
+
+1. 获取等待车辆列表--由函数`GetWatchVehicles`完成。
+
+这个过程其实就是获取无人车前方的等待车辆，存储形式为：
+
+`typedef std::unordered_map<std::string, std::vector<std::string>> StopSignLaneVehicles;`
+
+map中第一个`string`是车道id，第二个`vector<string>`是这个车道上在无人车前方的等待车辆id。整体的查询是直接在`PlanningStatus.stop_sign`(停车状态)中获取，第一次为空，后续不为空。
+
+```c++
+int StopSign::GetWatchVehicles(const StopSignInfo& stop_sign_info,
+                               StopSignLaneVehicles* watch_vehicles) {
+  watch_vehicles->clear();
+  StopSignStatus stop_sign_status = GetPlanningStatus()->stop_sign();
+  // 遍历所有的车道
+  for (int i = 0; i < stop_sign_status.lane_watch_vehicles_size(); ++i) {
+    auto lane_watch_vehicles = stop_sign_status.lane_watch_vehicles(i);
+    std::string associated_lane_id = lane_watch_vehicles.lane_id();
+    std::string s;
+    // 获取每个车道的等候车辆
+    for (int j = 0; j < lane_watch_vehicles.watch_vehicles_size(); ++j) {
+      std::string vehicle = lane_watch_vehicles.watch_vehicles(j);
+      s = s.empty() ? vehicle : s + "," + vehicle;
+      (*watch_vehicles)[associated_lane_id].push_back(vehicle);
+    }
+  }
+  return 0;
+}
+```
+
+2. 检查与更新停车状态`PlanningStatus.stop_sign`--由函数`ProcessStopStatus`完成
+
+停车过程可以分为5个阶段：正常行驶DRIVE--开始停车STOP--等待缓冲状态WAIT--缓慢前进CREEP--彻底停车DONE。
+
+- 更新停车状态。如果无人车距离最近一个停车区域过远，那么状态为正常行驶
+
+```c++
+// adjust status
+double adc_front_edge_s = reference_line_info->AdcSlBoundary().end_s();
+double stop_line_start_s = next_stop_sign_overlap_.start_s;
+if (stop_line_start_s - adc_front_edge_s >  // max_valid_stop_distance: 3.5m
+      config_.stop_sign().max_valid_stop_distance()) {
+  stop_status_ = StopSignStatus::DRIVE;
+}
+```
+
+- 如果停车状态是正常行驶DRIVE。
+
+这种情况下，如果车辆速度很大，或者与停车区域距离过远，那么继续设置为行驶DRIVE；反之就进入停车状态STOP。状态检查由`CheckADCkStop`完成。
+
+- 如果停车状态是开始停车STOP。
+
+这种情况下，如果从开始停车到当前经历的等待时间没有超过阈值stop_duration(默认1s)，继续保持STOP状态。反之，如果前方等待车辆不为空，那么就进入下一阶段WAIT缓冲阶段；如果前方车辆为空，那么可以直接进入到缓慢前进CREEP状态或者停车完毕状态。
+
+- 如果停车状态是等待缓冲WAIT
+
+这种情况下，如果等待时间没有超过一个阈值wait_timeout(默认8s)或者前方存在等待车辆，继续保持等待状态。反之可以进入到缓慢前进或者停车完毕状态
+
+- 如果停车状态是缓慢前进CREEP
+
+这种情况下，只需要检查无人车车头和停车区域的距离，如果大于某个值那么说明可以继续缓慢前进，保持状态不变，反之就可以完全停车了。
+
+3. 更新前方等待车辆
+
+a.当前状态是DRIVE，那么需要将障碍物都加入到前方等待车辆列表中，因为这些障碍物到时候都会排在无人车前方等待。
+
+```c++
+if (stop_status_ == StopSignStatus::DRIVE) {
+  for (const auto* path_obstacle : path_decision->path_obstacles().Items()) {
+    // add to watch_vehicles if adc is still proceeding to stop sign
+    AddWatchVehicle(*path_obstacle, &watch_vehicles);
+  }
+}
+```
+
+b.如果无人车当前状态是等待或者停车，删除部分排队等待车辆--`RemoveWatchVehicle`函数完成
+
+这种情况下，如果障碍物已经驶过停车区域，那么对其删除；否则继续保留。
+
+```c++
+double stop_line_end_s = over_lap_info->lane_overlap_info().end_s();
+double obstacle_end_s = obstacle_s + perception_obstacle.length() / 2;
+double distance_pass_stop_line = obstacle_end_s - stop_line_end_s;
+// 如果障碍物已经驶过停车区一定距离，可以将障碍物从等待车辆中删除。
+if (distance_pass_stop_line > config_.stop_sign().min_pass_s_distance() && !is_path_cross) {
+  erase = true;
+} else {
+  // passes associated lane (in junction)
+  if (!is_path_cross) {
+    erase = true;
+  }
+}
+// check if obstacle stops
+if (erase) {
+  for (StopSignLaneVehicles::iterator it = watch_vehicles->begin();
+         it != watch_vehicles->end(); ++it) {
+    std::vector<std::string>& vehicles = it->second;
+    vehicles.erase(std::remove(vehicles.begin(), vehicles.end(), obstacle_id), vehicles.end());
+  }
+}
+```
+
+- 对剩下来的障碍物重新组成一个新的等待队列--`ClearWatchVehicle`函数完成
+
+```c++
+for (StopSignLaneVehicles::iterator it = watch_vehicles->begin();
+       it != watch_vehicles->end();
+       /*no increment*/) {
+  std::vector<std::string>& vehicle_ids = it->second;
+  // clean obstacles not in current perception
+  for (auto obstacle_it = vehicle_ids.begin(); obstacle_it != vehicle_ids.end();) {
+    // 如果新的队列中已经不存在该障碍物了，那么直接将障碍物从这条车道中删除
+    if (obstacle_ids.count(*obstacle_it) == 0) {  
+      obstacle_it = vehicle_ids.erase(obstacle_it);
+    } else {
+      ++obstacle_it;
+    }
+  }
+  if (vehicle_ids.empty()) {  // 如果这整条车道上都不存在等待车辆了，直接把这条车道删除
+    watch_vehicles->erase(it++);
+  } else {
+    ++it;
+  }
+}
+```
+
+- 更新车辆状态PlanningStatus.stop_sign
+
+这部分由函数`UpdateWatchVehicles`完成，主要是将3中得到的新的等待车辆队列更新至stop_sign。
+
+```c++
+int StopSign::UpdateWatchVehicles(StopSignLaneVehicles* watch_vehicles) {
+  auto* stop_sign_status = GetPlanningStatus()->mutable_stop_sign();
+  stop_sign_status->clear_lane_watch_vehicles();
+
+  for (auto it = watch_vehicles->begin(); it != watch_vehicles->end(); ++it) {
+    auto* lane_watch_vehicles = stop_sign_status->add_lane_watch_vehicles();
+    lane_watch_vehicles->set_lane_id(it->first);
+    std::string s;
+    for (size_t i = 0; i < it->second.size(); ++i) {
+      std::string vehicle = it->second[i];
+      s = s.empty() ? vehicle : s + "," + vehicle;
+      lane_watch_vehicles->add_watch_vehicles(vehicle);
+    }
+  }
+  return 0;
+}
+```
+
+c. 如果当前车辆状态是缓慢前进状态CREEP
+
+这种情况下，可以直接创建停车的标签。
+
+-------------------------------------------------
+
+最后总结一下，障碍物和路况对无人车的决策影响分为两类，一类是纵向影响LongitudinalDecision，一类是侧向影响LateralDecision。
+
+纵向影响：
+
+```c++
+const std::unordered_map<ObjectDecisionType::ObjectTagCase, int, athObstacle::ObjectTagCaseHash>
+    PathObstacle::s_longitudinal_decision_safety_sorter_ = {
+        {ObjectDecisionType::kIgnore, 0},      // 忽略，优先级0
+        {ObjectDecisionType::kOvertake, 100},  // 超车，优先级100
+        {ObjectDecisionType::kFollow, 300},    // 跟随，优先级300
+        {ObjectDecisionType::kYield, 400},     // 减速，优先级400
+        {ObjectDecisionType::kStop, 500}};     // 停车，优先级500
+```
+
+侧向影响：
+
+```c++
+const std::unordered_map<ObjectDecisionType::ObjectTagCase, int, PathObstacle::ObjectTagCaseHash>
+    PathObstacle::s_lateral_decision_safety_sorter_ = {
+        {ObjectDecisionType::kIgnore, 0},      // 忽略，优先级0
+        {ObjectDecisionType::kNudge, 100},     // 微调，优先级100
+        {ObjectDecisionType::kSidepass, 200}}; // 绕行，优先级200
+```
+
+当有一个障碍物在11中路况下多次出发无人车决策时该怎么办？
+
+纵向决策合并，lhs为第一次决策，rhs为第二次决策，如何合并两次决策
+
+```c++
+ObjectDecisionType PathObstacle::MergeLongitudinalDecision(
+    const ObjectDecisionType& lhs, const ObjectDecisionType& rhs) {
+  if (lhs.object_tag_case() == ObjectDecisionType::OBJECT_TAG_NOT_SET) {
+    return rhs;
+  }
+  if (rhs.object_tag_case() == ObjectDecisionType::OBJECT_TAG_NOT_SET) {
+    return lhs;
+  }
+  const auto lhs_val =
+      FindOrDie(s_longitudinal_decision_safety_sorter_, lhs.object_tag_case());
+  const auto rhs_val =
+      FindOrDie(s_longitudinal_decision_safety_sorter_, rhs.object_tag_case());
+  if (lhs_val < rhs_val) {        // 优先选取优先级大的决策
+    return rhs;
+  } else if (lhs_val > rhs_val) {
+    return lhs;
+  } else {
+    if (lhs.has_ignore()) {
+      return rhs;
+    } else if (lhs.has_stop()) {    // 如果优先级相同，都是停车，选取停车距离小的决策，防止安全事故
+      return lhs.stop().distance_s() < rhs.stop().distance_s() ? lhs : rhs;
+    } else if (lhs.has_yield()) {   // 如果优先级相同，都是减速，选取减速距离小的决策，防止安全事故
+      return lhs.yield().distance_s() < rhs.yield().distance_s() ? lhs : rhs;
+    } else if (lhs.has_follow()) {  // 如果优先级相同，都是跟随，选取跟随距离小的决策，防止安全事故
+      return lhs.follow().distance_s() < rhs.follow().distance_s() ? lhs : rhs;
+    } else if (lhs.has_overtake()) { // 如果优先级相同，都是超车，选取超车距离大的决策，防止安全事故
+      return lhs.overtake().distance_s() > rhs.overtake().distance_s() ? lhs  : rhs;
+    } else {
+      DCHECK(false) << "Unknown decision";
+    }
+  }
+  return lhs;  // stop compiler complaining
+}
+```
+
+侧向合并，lhs为第一次决策，rhs为第二次决策，如何合并两次决策
+
+```c++
+ObjectDecisionType PathObstacle::MergeLateralDecision(
+    const ObjectDecisionType& lhs, const ObjectDecisionType& rhs) {
+  if (lhs.object_tag_case() == ObjectDecisionType::OBJECT_TAG_NOT_SET) {
+    return rhs;
+  }
+  if (rhs.object_tag_case() == ObjectDecisionType::OBJECT_TAG_NOT_SET) {
+    return lhs;
+  }
+  const auto lhs_val =
+      FindOrDie(s_lateral_decision_safety_sorter_, lhs.object_tag_case());
+  const auto rhs_val =
+      FindOrDie(s_lateral_decision_safety_sorter_, rhs.object_tag_case());
+  if (lhs_val < rhs_val) {         // 优先选取优先级大的决策       
+    return rhs;
+  } else if (lhs_val > rhs_val) {
+    return lhs;
+  } else {
+    if (lhs.has_ignore() || lhs.has_sidepass()) {
+      return rhs;
+    } else if (lhs.has_nudge()) {                        // 如果优先级相同，都是微调，选取侧向微调大的决策
+      return std::fabs(lhs.nudge().distance_l()) >
+                     std::fabs(rhs.nudge().distance_l())
+                 ? lhs
+                 : rhs;
+    }
+  }
+  return lhs;
+}
+```
