@@ -116,7 +116,7 @@ bool DPRoadGraph::FindPathTunnel(
 
 步骤A和C没什么难点，B步骤稍微有点繁琐，下面我们将逐步进行分析。在计算当前参考线下最优的前进路线时，正如开始所说的，可以每隔一段距离，就在车道横向采样一些点，表示无人车在车道不同宽度行驶时坐标，然后计算两个距离之间cost最小的坐标对，这就代表当前位置到下一位置的最优路径。这样就需要一步步解决以下问题：
 
-**Q1：如何采样坐标点？**
+**Q1：如何采样坐标点？--`SamplePathWaypoints`函数**
 
 这个问题在开始已经说过，规划首先就需要考虑：
 
@@ -146,13 +146,13 @@ const size_t num_sample_per_level =   // 每个位置，横向采样7个点
   const float step_length =            // 将step_length裁剪到[20,40]米之间
       common::math::Clamp(init_point.v() * kSamplePointLookForwardTime,
                           config_.step_length_min(), config_.step_length_max());
-  const float level_distance =        // 每隔level_distance进行一次横向采样，差不多10-20m进行一次采样
+  const float level_distance =        // 每隔level_distance进行一次横向采样，纵向采样的间隔差不多10-20m
       (init_point.v() > FLAGS_max_stop_speed) ? step_length : step_length / 2.0;
   float accumulated_s = init_sl_point_.s();
   float prev_s = accumulated_s;
 ```
 
-上面代码有一个词--level，其实就是纵向采样点，每个level中会横向采样若干点。当然，可以更紧凑的纵向与横向采样，但是在计算cost会增加过大的计算量，所以需要平衡。
+上面代码有一个词--level，其实就是纵向采样点，每个level中会横向采样若干点。当然，可以更紧凑的纵向与横向采样，但是在计算cost会增加过大的计算量，所以需要经过权衡。
 
 - 纵向&&横向怎么样进行采样？
 
@@ -176,3 +176,226 @@ if (status->planning_state().has_pull_over() &&
     }
   }
 ```
+
+然后循环进行纵向+横向采样，
+
+```c++
+for (std::size_t i = 0; accumulated_s < total_length; ++i) {
+    accumulated_s += level_distance;
+    // 计算纵向每个位置，有效的左右边界，kBoundaryBuff是无人车与车道线边界线的间距。需要保持无人车在车道内行驶。
+    reference_line_.GetLaneWidth(s, &left_width, &right_width);
+    constexpr float kBoundaryBuff = 0.20;
+    const float eff_right_width = right_width - half_adc_width - kBoundaryBuff;   // 计算右有效宽度
+    const float eff_left_width = left_width - half_adc_width - kBoundaryBuff;     // 计算左有效宽度
+
+    float kDefaultUnitL = 1.2 / (num_sample_per_level - 1);  // 每个位置上横向采样时，采样点之间的距离，差不多0.2m
+    if (reference_line_info_.IsChangeLanePath() &&           // 如果当前参考线是变道，且变道不安全(无人车前后一定距离内有障碍物)
+        !reference_line_info_.IsSafeToChangeLane()) {        // ，那么增加采样点间隔，这样可以下一时刻减少变道的时间。
+      kDefaultUnitL = 1.0;
+    }
+
+    const float sample_l_range = kDefaultUnitL * (num_sample_per_level - 1); // 横向采样的宽度
+    float sample_right_boundary = -eff_right_width;   // 计算FLU坐标系下，右边界
+    float sample_left_boundary = eff_left_width;      // 计算FLU坐标系下，左边界
+    const float kLargeDeviationL = 1.75;
+    if (reference_line_info_.IsChangeLanePath() ||    // 修正左右边界，如果参考线需要变道，并且已经便宜车道了，那么就将横向采样区间向变道方向平移。
+        std::fabs(init_sl_point_.l()) > kLargeDeviationL) {
+      sample_right_boundary = std::fmin(-eff_right_width, init_sl_point_.l());  // 左变道，修正左边界
+      sample_left_boundary = std::fmax(eff_left_width, init_sl_point_.l());     // 右变道，修正右边界
+      if (init_sl_point_.l() > eff_left_width) {      // 左变道，修正右边界，向左平移，因为左变道车道线右边的区域不用考虑
+        sample_right_boundary = std::fmax(sample_right_boundary, init_sl_point_.l() - sample_l_range);
+      }
+      if (init_sl_point_.l() < eff_right_width) {     // 右变道，修正左边界，向右平移，因为右变道车道线左边的区域不用考虑
+        sample_left_boundary = std::fmin(sample_left_boundary, init_sl_point_.l() + sample_l_range);
+      }
+    }
+    // 具体采样
+    ...
+}
+```
+
+最后进行每个纵向位置的横向区间采样，采样分两个多类情况：
+
+情况1：如果当前参考线需要变道，并且变道不安全，那么横向采样点就设置为第二条参考线的位置，直接走第二条参考线。
+
+```c++
+if (reference_line_info_.IsChangeLanePath() &&
+        !reference_line_info_.IsSafeToChangeLane()) {
+   sample_l.push_back(reference_line_info_.OffsetToOtherReferenceLine());
+} 
+```
+
+情况2：如果当前参考线需要侧方绕行(SIDEPASS)，即从旁边超车。若是可以进行左边超车，那么横向采样点设置为左边界+超车距离；右边超车，横向采样点设置为右边界+超车距离
+
+```c++
+else if (has_sidepass) {
+    // currently only left nudge is supported. Need road hard boundary for
+    // both sides
+    switch (sidepass_.type()) {
+      case ObjectSidePass::LEFT: {
+        sample_l.push_back(eff_left_width + config_.sidepass_distance());
+        break;
+      }
+      case ObjectSidePass::RIGHT: {
+        sample_l.push_back(-eff_right_width - config_.sidepass_distance());
+        break;
+      }
+      default:
+        break;
+    }
+}
+```
+
+情况3：正常行驶情况下，从横向区间[sample_right_boundary , sample_left_boundary]大小为sample_l_range进行均匀采样
+
+```c++
+else {
+  common::util::uniform_slice(sample_right_boundary, sample_left_boundary,
+                                  num_sample_per_level - 1, &sample_l);
+}
+```
+
+计算每个横向采样点的相对偏移距离l和累计距离s，封装成一个level，最后所有level封装成way_points
+
+```c++
+for (std::size_t i = 0; accumulated_s < total_length; ++i) {            // 纵向采样
+    std::vector<common::SLPoint> level_points;
+    planning_internal::SampleLayerDebug sample_layer_debug;
+    for (size_t j = 0; j < sample_l.size(); ++j) {                      // 每个纵向位置采样得到的所有横向采样点，封装成一个level
+      common::SLPoint sl = common::util::MakeSLPoint(s, sample_l[j]);
+      sample_layer_debug.add_sl_point()->CopyFrom(sl);
+      level_points.push_back(std::move(sl));
+    }
+    if (!reference_line_info_.IsChangeLanePath() && has_sidepass) {    // 对于不变道但是要超车的情况，额外增加一个车道线中心采样点
+      auto sl_zero = common::util::MakeSLPoint(s, 0.0);     
+      level_points.push_back(std::move(sl_zero));
+    }
+    if (!level_points.empty()) {                  // level不为空，封装进最终的way+points
+      points->emplace_back(level_points);
+    }
+```
+
+**Q2：如何计算两个level之间两两横向采样点之间的开销？--`UpdateNode`函数和`TrajectoryCost`类**
+
+一个注意点，Q1中采样其实没有把规划起始点加进去，代码中做了一个修正。
+
+```c++
+path_waypoints.insert(path_waypoints.begin(), std::vector<common::SLPoint>{init_sl_point_});
+```
+
+1. 障碍物处理
+
+在规划中，需要考虑到障碍物的轨迹信息，也就是需要考虑未来每个时刻，障碍物出现的位置，只要将障碍物每个时间点出现的位置，作为开销计算项即可。
+
+```c++
+TrajectoryCost trajectory_cost(
+      config_, reference_line_, reference_line_info_.IsChangeLanePath(),
+      obstacles, vehicle_config.vehicle_param(), speed_data_, init_sl_point_);
+```
+
+未来每个时间点计算方法也很简单：
+
+```c++
+const float total_time = std::min(heuristic_speed_data_.TotalTime(), FLAGS_prediction_total_time);
+num_of_time_stamps_ = static_cast<uint32_t>(std::floor(total_time / config.eval_time_interval()));
+```
+
+上述`FLAGS_prediction_total_time`其实就是PRediction模块中障碍物轨迹预测总时间，5s。`eval_time_interval`其实就是Prediction模块中障碍物两个预测轨迹点的时间差，0.1s。所以一共差不多50个位置点。最后对参考线上的每个障碍物在每个时间点设定位置标定框。
+
+对于每个障碍物，进行如下条件判断：
+
+情况1：如果是无人车可忽略的障碍物或者迫使无人车停车的障碍物，就不需要考虑。因为前者对无人车前进无影响；后者情况无人车智能停车，根本不需要前进了。
+
+情况2：如果无人车和某个时间点的障碍物横向距离比较大，那么无人车可以毫无影响的前进，所以该类障碍物也可以忽略。
+
+情况3：如果障碍物是虚拟障碍物，那么无人车可以毫无影响的前进，所以该类障碍物也可以忽略。
+
+情况4：如果障碍物是静止的，那么将其加入静止障碍物队列
+
+情况5：如果障碍物时运动的，那么就需要计算障碍物在该时间点的位置，并将其加入动态障碍物队列
+
+```c++
+std::vector<Box2d> box_by_time;
+for (uint32_t t = 0; t <= num_of_time_stamps_; ++t) {    // 计算每个时间点的位置，转换成标定框加入动态障碍物队列
+  TrajectoryPoint trajectory_point =
+        ptr_obstacle->GetPointAtTime(t * config.eval_time_interval());
+  Box2d obstacle_box = ptr_obstacle->GetBoundingBox(trajectory_point);
+  constexpr float kBuff = 0.5;
+  Box2d expanded_obstacle_box =
+       Box2d(obstacle_box.center(), obstacle_box.heading(),
+                  obstacle_box.length() + kBuff, obstacle_box.width() + kBuff);
+  box_by_time.push_back(expanded_obstacle_box);
+}
+dynamic_obstacle_boxes_.push_back(std::move(box_by_time));
+```
+
+2. level之间两两计算cost
+
+```c++
+bool DPRoadGraph::GenerateMinCostPath(
+  std::list<std::list<DPRoadGraphNode>> graph_nodes;    // 这是最后的前向遍历图，类似于神经网络结构，N个level，每个level若干横向采样点，两层level之间的采样点互相连接。
+  graph_nodes.emplace_back();                           //    而且网络中的每个node，都保存了，从规划起始点到该节点的最小cost，以及反向连接链(cost最小对应的parent)
+  graph_nodes.back().emplace_back(init_sl_point_, nullptr, ComparableCost());  // 输入层(规划起始点)加入网络图
+  auto &front = graph_nodes.front().front();            // 规划起始点：init_point
+  size_t total_level = path_waypoints.size();           // 网络层数，level数量
+
+  for (std::size_t level = 1; level < path_waypoints.size(); ++level) {  // 网络两两level之间计算连接cost
+    const auto &prev_dp_nodes = graph_nodes.back();     // 前一层level
+    const auto &level_points = path_waypoints[level];   // 当前层level中的所有横向采样点(类似神经元)
+    graph_nodes.emplace_back();
+    for (size_t i = 0; i < level_points.size(); ++i) {  // 计算当前层level中与前一层所有计算的连接权值，也就是cost
+      const auto &cur_point = level_points[i];
+      graph_nodes.back().emplace_back(cur_point, nullptr);
+      auto &cur_node = graph_nodes.back().back();
+      if (FLAGS_enable_multi_thread_in_dp_poly_path) {
+        ...
+      } else {    // 计算前一层prev_dp_nodes和当前层的节点cur_node的开销cost，取prev_dp_nodes中与cur_node开销cost最小的节点，设置为最优路径
+        UpdateNode(prev_dp_nodes, level, total_level, &trajectory_cost, &front, &cur_node); 
+      }
+    }
+  }
+}
+```
+
+经过注释，可以很容易的理解整个网络神经元(节点)之间连接cost的流程，那么Update函数中，如何计算前一层和当前层的某个节点之间的开销。其实比较简单，举个例子。现有：
+
+a. 前一层prev_dp_nodes中的某个节点prev_dp_node，它有4个属性：累计距离s0，横向偏移距离l0，横向速度dl0，横向加速度ddl0。
+
+b. 当前层某个节点cur_node，同样4个属性：累计距离s1，横向偏移距离l1，横向速度dl1，横向加速度ddl1。
+
+两个节点之间累积距离就是上述提到level_distance，大约10-20m。那么接下来的工作就是个参考线平滑一样，使用六次多项式进行两个点之间的多项式拟合，y=f(s)，自变量是累计距离差s，因变量是横向便宜距离l。经过定义两个点可以数值化为：
+
+prev_dp_node:
+
+l0 = f(0) = prev_dp_node.sl_point.l()
+
+dl0 = f'(0)
+
+ddl0 = f''(0)
+
+cur_node: 
+
+delta_s = cur_node.cur_point.s() - prev_dp_node.prev_sl_point.s()
+
+l1 = f(delta_s) = cur_node.cur_point.l()
+
+dl1 = f'(delta_s) = 0
+
+ddl1 = f''(delta_s) = 0
+
+匹配过程与[Prediction障碍物轨迹预测](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/predictor_manager.md/#poly_fit)
+
+那么cur_node与prev_dp_node相连得到的cost为：
+
+```c++
+const auto cost = trajectory_cost->Calculate(curve, prev_sl_point.s(), cur_point.s(),
+                                   level, total_level) +  prev_dp_node.min_cost;
+cur_node->UpdateCost(&prev_dp_node, curve, cost);
+```
+
+其中UpdateCost是刷新最小cost，这样可以得到与cur_node相连最小的cost，以及对应的prev_dp_node。
+
+最后一个问题：计算开销需要分为哪几项？
+
+**Q3：两两node之间的cost如何计算？包含多少项？**
+
