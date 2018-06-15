@@ -143,7 +143,7 @@ LaneSequence第一个LaneSegment对应的车道线: first_lane_id(feature.lane()
 
 **Move Sequence Predictor**
 
-在Move Sequence中，轨迹曲线的生成比较繁琐，主要是分别建立主方向和侧方向的多项式函数(函数形式以及其参数目前没有看明白，暂时先留空)，主要的计算过程分为：
+在Move Sequence中，轨迹曲线的生成比较繁琐，主要是分别建立主方向和侧方向的多项式函数，然后每个时刻在多项式上插值就可以得到采样点的累积距离s和侧方相对距离l主要的计算过程分为：
 
 1. 计算障碍物到车道中心线的时间
 
@@ -152,11 +152,96 @@ Eigen::Vector2d position(feature.position().x(), feature.position().y());
 double time_to_lat_end_state = std::max(FLAGS_default_time_to_lat_end_state, ComputeTimeToLatEndConditionByVelocity(obstacle, lane_sequence));
 ```
 
-这个相对来说不难理解，因为障碍物当前位置由x和y方向的速度vx和vy，同时可以计算得到障碍物到LaneSequence的之后最近LanePoint所在Lane的侧面距离relative_l，已经LaneSequence的第一个最近LanePoint的方向lane_heading，那么只要计算vx和vy在lane_heading垂直方向的分量`v_l = v_y * std::cos(lane_heading) - v_x * std::sin(lane_heading)`，然后relative_l / v_l即可
+这个相对来说不难理解，因为障碍物当前位置由x和y方向的速度vx和vy，同时可以计算得到障碍物到LaneSequence的之后最近LanePoint所在Lane的侧面距离relative_l，已经LaneSequence的第一个最近LanePoint的方向lane_heading，那么只要计算vx和vy在lane_heading垂直方向的分量`v_l = v_y * std::cos(lane_heading) - v_x * std::sin(lane_heading)`，然后relative_l / v_l即可。
 
-2. 计算lane_heading侧方向(Lateral)的多项式表达式 (目前暂时没看明白多项式的由来)
+2. 计算lane_heading侧方向(Lateral)的多项式表达式
 
-3. 计算lane_heading主方向(Longitudinal)的多项式表达式 (目前暂时没看明白多项式的由来)
+在侧方向上代码中构建了5次多项式来拟合这个曲线:
+
+$$ lateral = f(t) = a_0 + a_1t + a_2t^2 + a_3t^3 + a_4t^4 + a_5t^5 $$
+
+计算多项式函数第一个点信息，也就是障碍物当前位置信息：
+
+- 与原点距离，也就是f(0)，也是代码中的l0
+- 侧方轴速度，也就是f'(0)，也是代码中的dl0
+- 侧方轴加速度，也就是f''(0)，也是代码中的ddl0
+
+```c++
+double l0 = (cross_prod > 0) ? shift : -shift;
+double dl0 = v * std::sin(theta - start_lane_point.heading());
+double ddl0 = a * std::sin(theta - start_lane_point.heading());
+```
+
+经过了ts时间以后，障碍物就到了第二个点，也就是LaneSequence的第一个LanePoint，他的信息为：
+
+- 与原点距离，也就是f(ts)，为0，也是代码中的l1
+- 侧方轴速度，也就是f'(ts)，为0，也是代码中的dl1
+- 侧方轴加速度，也就是f''(ts)，为0，也是代码中的dl1
+
+为什么为0？因为多项式坐标系是以LanePoint为原点，侧方轴为x轴。
+
+所以上述求解dl0和ddl0过程中，需要减去LanePoint的方向，将heading转化到新的坐标系中。乘以sin是计算侧方轴上的分量。
+
+那么就有:
+
+$$ f(0) = a_0 = l0  $$
+
+$$ f'(0) = a_1 = dl0 $$
+
+$$ f''(0) = 2a_2 = ddl0 $$
+
+所以6元5次多项式的前面三个系数为: l0, dl0, 0.5\*ddl0，对应代码中的
+
+```c++
+coefficients->operator[](0) = l0;
+coefficients->operator[](1) = dl0;
+coefficients->operator[](2) = ddl0 / 2.0;
+```
+
+现在将第二个点信息带入得到：
+
+$$ f(t_s) = l0 + dl0·t_s + 0.5·ddl0·{t_s}^2 + a_3{t_s}^3 + a_4{t_s}^4 + a_5{t_s}^5 = l1  $$
+
+$$ f'(t_s) = dl0 + ddl0·t_s + 3a_3{t_s}^2 + 4a_4{t_s}^3 + 5a_5{t_s}^4 = dl1 $$
+
+$$ f''(t_s) = ddl0 + 6a_3t_s + 12a_4{t_s}^2 + 20a_5{t_s}^3 = ddl1 $$
+
+通过移项可以得到：
+
+$$ c0 =  a_3 + a_4t_s + a_5{t_s}^2 = (l1 - 0.5·ddl0·{t_s}^2 - dl0·t_s - l0) / {t_s}^3 $$
+
+$$ c1 = 3a_3 + 4a_4t_s + 5a_5{t_s}^2 = (dl1 - ddl0·t_s - dl0) / {t_s}^2 $$
+
+$$ c2 = 6a_3 + 12a_4t_s + 20a_5{t_s}^2 = (ddl1 - ddl0) / t_s $$
+
+以上三个一元二次多项式就可以求解了，最后的结果为：
+
+$$ a_3 = 0.5 * (20.0 * c0 - 8.0 * c1 + c2) $$
+
+$$ a_4 = (-15.0 * c0 + 7.0 * c1 - c2) / t_s $$
+
+$$ a_5 = (6.0 * c0 - 3.0 * c1 + 0.5 * c2) / {t_s}^2 $$
+
+这也是对应代码：
+
+```c++
+double p = time_to_end_state;
+double p2 = p * p;
+double p3 = p2 * p;
+double c0 = (l1 - 0.5 * p2 * ddl0 - dl0 * p - l0) / p3;
+double c1 = (dl1 - ddl0 * p - dl0) / p2;
+double c2 = (ddl1 - ddl0) / p;
+
+coefficients->operator[](3) = 0.5 * (20.0 * c0 - 8.0 * c1 + c2);
+coefficients->operator[](4) = (-15.0 * c0 + 7.0 * c1 - c2) / p;
+coefficients->operator[](5) = (6.0 * c0 - 3.0 * c1 + 0.5 * c2) / p2;
+```
+
+这样多项式拟合和求解就玩完成了。
+
+3. 计算lane_heading主方向(Longitudinal)的多项式表达式
+
+具体的计算方法与2中一致，但是Longitudinal方向构建的是4次多项式，仅此区别。
 
 4. 最后一步就是根据两个多项式进行插值，可以看到Apollo对这段短时间的轨迹一共插值50个点`total_num = static_cast<size_t>(total_time / period)`，并且分装成PathPoint
 
