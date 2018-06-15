@@ -45,6 +45,7 @@
 	- [(组件)规划与控制地图: Pnc Map](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/pnc_map.md)
 	- [(组件)指引线提供器: ReferenceLineProvider](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/reference_line_provider.md)
 	- [(组件)障碍物&参考线&交通规则融合器：Frame类](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/frame.md)
+	- [(组件)EM规划器：EMPlanner](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/em_planner.md)
 
 References：
 
