@@ -27,9 +27,9 @@ step 3：前进到最小cost对应的采样点，然后重复2对下个位置横
 
 为了更加生动形象的理解，我们以神经网络为类比模型。规划起始点s就是神经网络的输入，只有一个点；规划终止点x其实就是神经网络的输出，但是可以有若干点，这些点在参考线上的长度一致，但车道宽度可以不一致，也就是说可以规划到路中央，也可以规划到路边。纵向每隔d米采样其实就是类似于一个个隐藏层，每个位置横向采样就是该隐藏层的不同神经元。网络中相邻层之间神经元的连接权值就是从前一个点行驶到另一个点所需要的开销cost。那么计算一条最优路径path(s)可以表示为：
 
-$$ mincost(path(s,x^l)) = min_i min_j mincost(path(a,x_j^{l-1})) + cost(x_j^{l-1}, x_i^{l}) $$
+$$ mincost(path(s,x^l)) = min_i min_j (mincost(path(a,x_j^{l-1})) + cost(x_j^{l-1}, x_i^{l})) $$
 
-公式中$ mincost(path(s,x^l)) $表示从规划起始点s到规划终点(也就是level层输出的最小开销)，只需要取输出层中具有最小开销的点即可，也就对应$min_i$，其中i从0开始到输出层的数量。起始点到终点i个神经元的最小开销，可以分别计算起始点到倒数第二层每个神经元的最小开销 $mincost(path(a,x_j^{l-1}))$，在加上这个神经元到终点i神经元的开销$cost(x_j^{l-1}, x_i^{l})$，最后取倒数第二层中j个神经元计算最小值，即为整个最优路径的cost，这就是动态规划的原理。神经网络中每个点都保存着起始点到该点的最小开销cost。
+公式中$ mincost(path(s,x^l)) $表示从规划起始点s到规划终点(也就是level层输出的最小开销)，只需要取输出层中具有最小开销的点即可，也就对应$min_i$，其中i从0开始到输出层的数量。起始点到终点i个神经元的最小开销，可以分别计算起始点到倒数第二层每个神经元的最小开销 $mincost(path(a,x_j^{l-1}))$，在加上这个神经元到终点i神经元的开销$cost(x_j^{l-1}, x_i^{l})$，最后取倒数第二层中j个神经元计算最小值，即为整个最优路径的cost，这就是动态规划的原理。神经网络中每个点都保存着起始点到该点的最小开销cost，也就是$mincost(path(a,b)$。
 
 在计算开销cost的过程中，需要考略三个因素：无人车位置(最好就是验证参考线前进，横向不停地调整会增加cost)，静态障碍物以及动态障碍物(这两类已经在Frame中完成设置，已经考虑到感知物体和路况)。
 
@@ -407,3 +407,263 @@ cur_node->UpdateCost(&prev_dp_node, curve, cost);
 
 **Q3：两两node之间的cost如何计算？包含多少项？**
 
+正如开头所说，两两level中不同node之间cost计算分为三个部分：路径开销PathCost，静态障碍物开销StaticObstacleCost和动态障碍物开销DynamicObstacleCost，从代码中我们可以清晰的开导cost的组成。
+
+```c++
+/// file in apollo/modules/planning/tasks/dp_poly_path/trajectory_cost.cc
+ComparableCost TrajectoryCost::Calculate(const QuinticPolynomialCurve1d &curve,
+                                         const float start_s, const float end_s,
+                                         const uint32_t curr_level,
+                                         const uint32_t total_level) {
+  ComparableCost total_cost;
+  // path cost
+  total_cost += CalculatePathCost(curve, start_s, end_s, curr_level, total_level);
+  // static obstacle cost
+  total_cost += CalculateStaticObstacleCost(curve, start_s, end_s);
+  // dynamic obstacle cost
+  total_cost += CalculateDynamicObstacleCost(curve, start_s, end_s);
+  return total_cost;
+}
+```
+
+1. 路径开销PathCost
+
+在Q2中已经拟合出了一条前一个node到后一个node的5次多项式，这就是前进的路线中侧方距离l的轨迹。路径开销需要对这条轨迹做评估，具体的评估方法也比较简单。我们已经可以的知道两个node之间的前进距离level_distance大约为10-20米，也就是函数的区间长度为10-20米，我们只需要对区间进行采样，每1米采样一个点，就可以得到约10-20个路径点的侧方距离l，侧方速度dl以及侧方加速度ddl数据。再对这若干组数据评估cost相加即为这条path的开销。
+
+```c++
+ComparableCost TrajectoryCost::CalculatePathCost(
+    const QuinticPolynomialCurve1d &curve, const float start_s,
+    const float end_s, const uint32_t curr_level, const uint32_t total_level) {
+  for (float curve_s = 0.0; curve_s < (end_s - start_s); curve_s += config_.path_resolution()) { // path_resolution: 1.0m，每1m采样一个点
+    const float l = curve.Evaluate(0, curve_s);  // 根据拟合的5次多项式，计算该点的侧方距离
+    path_cost += l * l * config_.path_l_cost() * quasi_softmax(std::fabs(l));    // A. 侧方距离l开销，path_l_cost：6.5
+
+    double left_width = 0.0;
+    double right_width = 0.0;
+    reference_line_->GetLaneWidth(curve_s + start_s, &left_width, &right_width);
+    constexpr float kBuff = 0.2;
+    if (!is_change_lane_path_ && (l + width / 2.0 + kBuff > left_width ||      // 确认是否已经偏离参考线 
+                                  l - width / 2.0 - kBuff < -right_width)) {
+      cost.cost_items[ComparableCost::OUT_OF_BOUNDARY] = true;
+    }
+
+    const float dl = std::fabs(curve.Evaluate(1, curve_s));
+    path_cost += dl * dl * config_.path_dl_cost();           // B. 侧方速度开销，path_dl_cost：8000
+
+    const float ddl = std::fabs(curve.Evaluate(2, curve_s));
+    path_cost += ddl * ddl * config_.path_ddl_cost();        // C. 侧方加速度开销，path_ddl_cost：5
+  }
+
+  if (curr_level == total_level) {
+    const float end_l = curve.Evaluate(0, end_s - start_s);
+    path_cost += std::sqrt(end_l - init_sl_point_.l() / 2.0) * config_.path_end_l_cost(); // path_end_l_cost：10000
+  }
+  cost.smoothness_cost = path_cost;
+}
+```
+
+从代码中可以看到这三部分开销，仔细分析一下可以得到如下结论：
+
+**结论1：无论是l，dl和ddl哪个开销，数值越大，cost也就越大。这也表明，Apollo其实鼓励无人车沿着参考线前进，因为沿着参考线前进，l，dl和ddl都是为0的。**
+
+**结论2：从开销系数来看，Apollo对于侧方距离l和侧方加速度ddl相对来说比较宽松，对侧方速度限制极为严格。但是需要注意一点，但从系数其实无法正确的得到这个结论，因为还要看三者对应的数值范围，如果数值范围小，同时参数小，那么这一项很容易就被忽略了，为了解决这个问题，可以提升其系数，增加权重。**
+
+**结论3：代码额外增加了起始点和规划终点的侧方偏移，保证不必要的偏移，正常不变道情况下最好是沿着同一车道前进，不变道。**
+
+2. 静态障碍物开销StaticObstacleCost
+
+```c++
+ComparableCost TrajectoryCost::CalculateStaticObstacleCost(
+    const QuinticPolynomialCurve1d &curve, const float start_s,
+    const float end_s) {
+  ComparableCost obstacle_cost;
+  for (float curr_s = start_s; curr_s <= end_s; curr_s += config_.path_resolution()) { // 拟合曲线采样
+    const float curr_l = curve.Evaluate(0, curr_s - start_s);
+    for (const auto &obs_sl_boundary : static_obstacle_sl_boundaries_) {
+      obstacle_cost += GetCostFromObsSL(curr_s, curr_l, obs_sl_boundary);
+    }
+  }
+  obstacle_cost.safety_cost *= config_.path_resolution();
+  return obstacle_cost;
+}
+```
+
+静态障碍物开销其实思路和路径开销一样，在这条多项式曲线上采样，计算每个采样点和所有障碍物的标定框是否重叠，重叠cost就比较大。分情况：
+
+情况1：障碍物和无人车侧方向上的距离大于一个阈值(lateral_ignore_buffer，默认3m)，那么cost就是0，忽略障碍物
+
+情况2：如果障碍物在无人车后方，cost为0，可忽略。
+
+否则就计算cost
+
+```c++
+const float delta_l = std::fabs(           // 静态障碍物中心和无人车中心侧方向上的距离
+      adc_l - (obs_sl_boundary.start_l() + obs_sl_boundary.end_l()) / 2.0);
+
+obstacle_cost.safety_cost +=               // A. 侧方向距离造成的cost
+    config_.obstacle_collision_cost() *    // 系数，obstacle_collision_cost：1e8
+    Sigmoid(config_.obstacle_collision_distance() - delta_l);  // obstacle_collision_distance：0.5
+
+const float delta_s = std::fabs(           // 静态障碍物中心和无人车中心前方向上的距离
+    adc_s - (obs_sl_boundary.start_s() + obs_sl_boundary.end_s()) / 2.0);
+obstacle_cost.safety_cost +=               // B. 前方向距离造成的cost
+    config_.obstacle_collision_cost() *    // obstacle_collision_cost: 1e8
+    Sigmoid(config_.obstacle_collision_distance() - delta_s);
+```
+
+那么经过分析就可以得到两个结论：
+
+**结论1：静态障碍物cost计算就分为侧方向cost和前方向cost，计算方法是一样的**
+
+**结论2：从两个方向计算的方法来看，我们可以看到Sigmoid(·)这个函数是单调递减的，在0.5(obstacle_collision_distance)时取0.5，越大取值越小。所以Apollo鼓励无人车在侧方向和前方向上与障碍物保持一定距离，如0.5m以上。**
+
+3. 动态障碍物开销DynamicObstacleCost
+
+```c++
+ComparableCost TrajectoryCost::CalculateDynamicObstacleCost(
+    const QuinticPolynomialCurve1d &curve, const float start_s,
+    const float end_s) const {
+  ComparableCost obstacle_cost;
+  float time_stamp = 0.0;
+  for (size_t index = 0; index < num_of_time_stamps_;           // 障碍物每隔eval_time_interval(默认0.1s)会得到一个运动坐标，分别计算对所有时间点坐标的cost
+       ++index, time_stamp += config_.eval_time_interval()) {
+    common::SpeedPoint speed_point;
+    heuristic_speed_data_.EvaluateByTime(time_stamp, &speed_point);
+    float ref_s = speed_point.s() + init_sl_point_.s();
+    for (const auto &obstacle_trajectory : dynamic_obstacle_boxes_) {      // 对所有动态障碍物分别计算cost
+      obstacle_cost +=  GetCostBetweenObsBoxes(ego_box, obstacle_trajectory.at(index));
+    }
+  }
+  constexpr float kDynamicObsWeight = 1e-6;
+  obstacle_cost.safety_cost *= (config_.eval_time_interval() * kDynamicObsWeight);
+  return obstacle_cost;
+}
+```
+
+区别静态障碍物，动态障碍物会在这个时间段内运动，在前面我们已经对障碍物进行时间段运动采样，得到了障碍物每隔0.1s的坐标位置，那么只要需要计算每个采样点和这些运动的坐标位置cost，求和就可以每个动态障碍物的cost。
+
+```c++
+// Simple version: calculate obstacle cost by distance
+ComparableCost TrajectoryCost::GetCostBetweenObsBoxes(
+    const Box2d &ego_box, const Box2d &obstacle_box) const {
+  ComparableCost obstacle_cost;
+
+  const float distance = obstacle_box.DistanceTo(ego_box);
+  if (distance > config_.obstacle_ignore_distance()) {
+    return obstacle_cost;
+  }
+
+  obstacle_cost.safety_cost +=            // A. 计算碰撞cost
+      config_.obstacle_collision_cost() *  // obstacle_collision_cost: 1e8 
+      Sigmoid(config_.obstacle_collision_distance() - distance);  // obstacle_collision_distance: 0.5
+  obstacle_cost.safety_cost +=            // B. 计算风险cost
+      20.0 * Sigmoid(config_.obstacle_risk_distance() - distance);  // obstacle_risk_distance: 2.0
+  return obstacle_cost;
+}
+```
+
+从代码可以得到如下结论：
+
+**结论1：动态障碍物计算需要考虑到每个时间点上障碍物的位置，每个时间点每个障碍物的cost计算分为碰撞cost和风险cost。**
+
+**结论2：从计算公式可以看到，一样是Sigmoid，碰撞cost系数高达1e8，风险cost系数为20，所以Apollo对障碍物碰撞惩罚是非常高的，同样对存在风险的位置也有较高的惩罚。碰撞要求障碍物和无人车在约0.5m以内；风险则定义在2m以内。**
+
+**Q4. 如何生成一条最小cost的路径？**
+
+当计算完每个node的最优路径(起始规划点到改点具有最小的cost)，那么就可以计算从起始规划点到终点的最优路径。首先终点不止一个，也就是所有终点采样点的累计距离s是一致的，但是侧方相对距离l是在一个区间内的，所以：
+
+step 1：选择最后一个level中，具有最小cost的node最为规划终点
+
+```c++
+bool DPRoadGraph::GenerateMinCostPath(
+  // find best path
+  DPRoadGraphNode fake_head; 
+  for (const auto &cur_dp_node : graph_nodes.back()) {     // 在最后一个level中查找
+    fake_head.UpdateCost(&cur_dp_node, cur_dp_node.min_cost_curve, cur_dp_node.min_cost);
+  }
+}
+```
+
+step 2: 根据父指针向前遍历，得到至后向前的一条路径，倒置一下就是cost最小的路径
+
+```c++
+bool DPRoadGraph::GenerateMinCostPath(
+  const auto *min_cost_node = &fake_head;
+  while (min_cost_node->min_cost_prev_node) {
+    min_cost_node = min_cost_node->min_cost_prev_node;
+    min_cost_path->push_back(*min_cost_node);
+  }
+  if (min_cost_node != &graph_nodes.front().front()) {
+    return false;
+  }
+  std::reverse(min_cost_path->begin(), min_cost_path->end());
+}
+```
+
+额外补充一点，如果和比较两个节点的cost，除了cost有对应的值，还有三个优先级状态:
+
+- HAS_COLLISION: 存在碰撞
+- OUT_OF_BOUNDARY：超出边界
+- OUT_OF_LANE：超出车道
+
+三个优先级依次从高到低。在比较两个cost(ComparableCost)时，首先比较cost优先级，如果优先级不一样，那么优先级高的cost大(不看cost值大小)；如果优先级一样，才比较cost值大小。
+
+
+## 速度规划--DpStSpeedOptimizer
+
+在路径规划中，已经给出了一条从规划起始点到规划终点开销cost最小的路径，如下图的蓝色星星组成的路径，每个蓝色的路径点都有相对于参考线的累计距离s和侧方相对距离l。那么剩下最后一个问题：每个规划点的速度怎么设定？换句话说无人车应该在什么时间点到达轨迹点？这就需要考虑障碍物在每个时间间隔的位置。
+
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/planning/speed_plann.png)
+
+先看一下代码结构：
+
+```c++
+/// file in apollo/modules/planning/planner/em/em_planner.cc
+Status EMPlanner::Plan(const TrajectoryPoint& planning_start_point, Frame* frame) {
+  for (auto& reference_line_info : frame->reference_line_info()) {       // 先分别对每条参考线进行规划
+    auto cur_status = PlanOnReferenceLine(planning_start_point, frame, &reference_line_info);  // 规划主函数
+}
+Status EMPlanner::PlanOnReferenceLine(
+    const TrajectoryPoint& planning_start_point, Frame* frame,
+    ReferenceLineInfo* reference_line_info) {
+  for (auto& optimizer : tasks_) {               // 对每条参考线分别进行所有任务的规划，包括速度规划、路径位置规划、位置决策器规划等。
+    ret = optimizer->Execute(frame, reference_line_info);
+  }
+}
+/// file in apollo/modules/planning/tasks/speed_optimizer.cc
+apollo::common::Status SpeedOptimizer::Execute(
+    Frame* frame, ReferenceLineInfo* reference_line_info) {
+  Task::Execute(frame, reference_line_info);
+  auto ret = Process(   // 最终会调用速度规划类的Process函数
+      reference_line_info->AdcSlBoundary(), reference_line_info->path_data(),
+      frame->PlanningStartPoint(), reference_line_info->reference_line(),
+      *reference_line_info->mutable_speed_data(),
+      reference_line_info->path_decision(),
+      reference_line_info->mutable_speed_data());
+  return ret;
+}
+/// file in apollo/modules/planning/tasks/dp_st_speed/dp_st_speed_optimizer.cc
+Status DpStSpeedOptimizer::Process(const SLBoundary& adc_sl_boundary,
+                                   const PathData& path_data,
+                                   const TrajectoryPoint& init_point,
+                                   const ReferenceLine& reference_line,
+                                   const SpeedData& reference_speed_data,
+                                   PathDecision* const path_decision,
+                                   SpeedData* const speed_data) {
+ 
+  StBoundaryMapper boundary_mapper(
+      adc_sl_boundary, st_boundary_config_, *reference_line_, path_data,
+      dp_st_speed_config_.total_path_length(), dp_st_speed_config_.total_time(),
+      reference_line_info_->IsChangeLanePath());
+
+  path_decision->EraseStBoundaries();
+  if (boundary_mapper.CreateStBoundary(path_decision).code() == ErrorCode::PLANNING_ERROR) {
+  }
+  SpeedLimitDecider speed_limit_decider(adc_sl_boundary, st_boundary_config_, *reference_line_, path_data);
+
+  if (!SearchStGraph(boundary_mapper, speed_limit_decider, path_data,
+                     speed_data, path_decision, st_graph_debug)) {
+  }
+  return Status::OK();
+}
+```
