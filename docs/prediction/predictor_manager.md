@@ -139,7 +139,7 @@ LaneSequence第一个LaneSegment对应的车道线: first_lane_id(feature.lane()
 
 这个过程比较简单，在代码中可以清晰地看出。至于为什么要额外计算转弯的最大概率，一种可能的原因是evaluate评估得到的结果更多的是偏向于直行，也就是那么多LaneSequence中直行的概率是很大的，而转弯的概率比较小，如果直接根据最大概率一锤定音，那么很难出现转弯的情况。如果把转弯单独拿出来，这会更加障碍物的评估准确率。最终得到的有效LaneSequence可能有多条，所以每个障碍物对应的Trajectory可能有多条。
 
-<div id="poly_fit"></div>div>
+<div id="poly_fit"></div>
 
 ## 轨迹曲线生成--DrawMoveSequenceTrajectoryPoints
 
