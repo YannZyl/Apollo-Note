@@ -650,20 +650,194 @@ Status DpStSpeedOptimizer::Process(const SLBoundary& adc_sl_boundary,
                                    const SpeedData& reference_speed_data,
                                    PathDecision* const path_decision,
                                    SpeedData* const speed_data) {
- 
-  StBoundaryMapper boundary_mapper(
-      adc_sl_boundary, st_boundary_config_, *reference_line_, path_data,
-      dp_st_speed_config_.total_path_length(), dp_st_speed_config_.total_time(),
-      reference_line_info_->IsChangeLanePath());
-
   path_decision->EraseStBoundaries();
-  if (boundary_mapper.CreateStBoundary(path_decision).code() == ErrorCode::PLANNING_ERROR) {
-  }
+  if (boundary_mapper.CreateStBoundary(path_decision).code() == ErrorCode::PLANNING_ERROR) {}
   SpeedLimitDecider speed_limit_decider(adc_sl_boundary, st_boundary_config_, *reference_line_, path_data);
 
   if (!SearchStGraph(boundary_mapper, speed_limit_decider, path_data,
-                     speed_data, path_decision, st_graph_debug)) {
-  }
+                     speed_data, path_decision, st_graph_debug)) {}
   return Status::OK();
 }
 ```
+
+整体的速度规划分为两个部分：
+
+1. 限制条件计算。包括障碍物st边界框，也就是某时刻无人车能前进的位置上下界；此外还有每个位置的速度限制(道路限速，超车限速等因素)
+
+2. 速度规划
+
+### Part 1. 障碍物st边界框计算--`StBoundaryMapper::CreateStBoundary`函数
+
+对于每个障碍物以及他的预测轨迹(5s内，每0.1s有一个预测轨迹点)。只需要遍历每个障碍物预测轨迹点，然后去查询路径规划得到的路径点，如果两两有重叠，就可以构造一个(累计距离s，相对时间t)的一个锚点。
+
+```c++
+for (int i = 0; i < trajectory.trajectory_point_size(); ++i) {
+      const auto& trajectory_point = trajectory.trajectory_point(i);
+      const Box2d obs_box = obstacle.GetBoundingBox(trajectory_point);
+      const double step_length = vehicle_param_.front_edge_to_center();
+      for (double path_s = 0.0; path_s < discretized_path.Length();          // 在规划的路径下采样，每半车一个采样点
+           path_s += step_length) { 
+        const auto curr_adc_path_point =                                     // 计算采样点的累计距离s
+            discretized_path.EvaluateUsingLinearApproximation(
+                path_s + discretized_path.StartPoint().s());
+        if (CheckOverlap(curr_adc_path_point, obs_box,                       // 确认障碍物和无人车在该时间点是够有重叠，如果没有重叠，就可以忽略该时间点的障碍物
+                         st_boundary_config_.boundary_buffer())) {
+          // found overlap, start searching with higher resolution
+          const double backward_distance = -step_length;                     // 下界初始距离
+          const double forward_distance = vehicle_param_.length() +          // 上节初始距离
+                                          vehicle_param_.width() +
+                                          obs_box.length() + obs_box.width();
+          bool find_low = false;
+          bool find_high = false;
+          double low_s = std::fmax(0.0, path_s + backward_distance);
+          double high_s = std::fmin(discretized_path.Length(), path_s + forward_distance);
+          // 采用步步紧靠的方法，构造更紧凑的上下界low_s和high_s
+          while (low_s < high_s) {
+            ...
+          if (find_high && find_low) {
+            lower_points->emplace_back(          // 加入下界信息，对应在参考线上的累计距离s，和相对时间t(障碍物轨迹相对时间)
+                low_s - st_boundary_config_.point_extension(),
+                trajectory_point_time);
+            upper_points->emplace_back(
+                high_s + st_boundary_config_.point_extension(),
+                trajectory_point_time);
+          }
+          break;
+        }
+      }
+    }
+  }
+```
+
+从上面代码我们可以很清晰的看到这个(累计距离s，相对时间t)标定框的计算，这个标定框可以解释为，无人车再该时间点，可以行驶到的坐标上下界。同时也会根据无人车状态跟随follow，减速yield，超车overtake等情况设定边界框类型。这个上下界的st边界框将存储在PathObstacle中，是每个时刻障碍物的所在的区域标定框，无人车不能与该标定框有冲突。
+
+```c++
+Status StBoundaryMapper::MapWithDecision(
+    PathObstacle* path_obstacle, const ObjectDecisionType& decision) const {
+  // 计算障碍物的边界框，当且仅当障碍物再某个时刻与无人车规划路径有重叠时，才被考虑。
+  std::vector<STPoint> lower_points;
+  std::vector<STPoint> upper_points;
+  if (!GetOverlapBoundaryPoints(path_data_.discretized_path().path_points(),
+                                *(path_obstacle->obstacle()), &upper_points,
+                                &lower_points)) {
+    return Status::OK();
+  }
+  // 转成StBoundary，并且打上标签与数据，存入PathObstacle中
+  auto boundary = StBoundary::GenerateStBoundary(lower_points, upper_points)
+                      .ExpandByS(boundary_s_buffer)
+                      .ExpandByT(boundary_t_buffer);
+
+  // get characteristic_length and boundary_type.
+  StBoundary::BoundaryType b_type = StBoundary::BoundaryType::UNKNOWN;
+  double characteristic_length = 0.0;
+  if (decision.has_follow()) {
+    characteristic_length = std::fabs(decision.follow().distance_s());
+    b_type = StBoundary::BoundaryType::FOLLOW;
+  } else if (decision.has_yield()) {
+    characteristic_length = std::fabs(decision.yield().distance_s());
+    boundary = StBoundary::GenerateStBoundary(lower_points, upper_points)
+                   .ExpandByS(characteristic_length);
+    b_type = StBoundary::BoundaryType::YIELD;
+  } else if (decision.has_overtake()) {
+    characteristic_length = std::fabs(decision.overtake().distance_s());
+    b_type = StBoundary::BoundaryType::OVERTAKE;
+  } else {
+  }
+  boundary.SetBoundaryType(b_type);
+  boundary.SetId(path_obstacle->obstacle()->Id());
+  boundary.SetCharacteristicLength(characteristic_length);
+  path_obstacle->SetStBoundary(boundary);
+  return Status::OK();
+}
+```
+
+最后可以遍历所有的PathPbstacle，获取所有的障碍物在不同时刻的st边界框以及边界框类型，该部分由`DpStSpeedOptimizer::SearchStGraph`中完成，所有的st边界框将存储在boundaries中。
+
+### Part2 无人车速度限制--`SpeedLimitDecider::GetSpeedLimits`函数完成
+
+这个函数做的工作就相对来说比较明显，计算规划路径中每个点所在位置的速度限制，速度限制来源于4方面：
+
+1. 车道本身限制，例如速度不大于60km/h
+
+```c++
+// (1) speed limit from map
+double speed_limit_on_reference_line = reference_line_.GetSpeedLimitFromS(frenet_point_s);
+```
+
+2. 向心加速度限制
+
+```c++
+//  -- 2.1: limit by centripetal force (acceleration)
+const double centri_acc_speed_limit =
+    std::sqrt(GetCentricAccLimit(std::fabs(avg_kappa[i])) /
+              std::fmax(std::fabs(avg_kappa[i]), st_boundary_config_.minimal_kappa()));
+```
+
+根据向心加速度公式: $ a = v ^2 / R = v^2 · kappa$，可以很轻松的计算速度：$ v = \sqrt(a / kappa)$。现在关键是向心加速度a如何计算，代码中在`GetCentricAccLimit`函数中实现，其实实现方法非常简单，根据(v_high, h_v_acc)和(v_low, l_v_acc)两个坐标点构建一个一元一次方程: $ y = av + b $，其中y是向心加速度，v是速度，a和b分别是斜率与截距。
+
+斜率计算：$ a = (h_v_acc - l_v_acc) / (v_high - v_low) = k1 $ 
+截距计算：$ b = h_v_acc - v_high * k1 = k2 $
+
+最后给定kappa(k)，可以得到对应的速度v：
+
+$ v^2 · k = acc = a·v + b $，整理得到:$ k·v^2 - av - b = 0 $
+
+根绝一元二次多项式的通用求解公式: $ v = (a + \sqrt(a^2 + 4kb))/2k $
+
+```c++
+const double v = (k1 + std::sqrt(k1 * k1 + 4.0 * kappa * k2)) / (2.0 * kappa);
+if (v > v_high) {
+  return h_v_acc;
+} else if (v < v_low) {
+  return l_v_acc;
+} else {
+  return v * k1 + k2;
+}
+```
+
+代码还对最终的v做了一个区间的截取。限定在[h_v_acc, l_v_acc]中。
+
+3. 向心力限制
+
+```c++
+// -- 2.2: limit by centripetal jerk
+double centri_jerk_speed_limit = std::numeric_limits<double>::max();
+if (i + 1 < discretized_path_points.size()) {
+  const double ds = discretized_path_points.at(i + 1).s() - discretized_path_points.at(i).s();
+  const double kEpsilon = 1e-9;
+  const double centri_jerk =
+          std::fabs(avg_kappa[i + 1] - avg_kappa[i]) / (ds + kEpsilon);
+  centri_jerk_speed_limit = std::fmax(
+          10.0, st_boundary_config_.centri_jerk_speed_coeff() / centri_jerk);
+}
+```
+
+这部分暂时没看透，留待后续完善。
+
+4. 无人车微调限制
+
+遍历所有障碍物的侧方向标签，如果存在以下两种情况就需要微调速度：
+
+情况1：障碍物标签为向左微调ObjectNudge::LEFT_NUDGE，并且无人车确实被障碍物阻挡
+
+```c++
+bool is_close_on_left =
+    (nudge.type() == ObjectNudge::LEFT_NUDGE) &&
+    (frenet_point_l - vehicle_param_.right_edge_to_center() - kRange <
+    const_path_obstacle->PerceptionSLBoundary().end_l());
+```
+
+情况2：障碍物标签为向右微调ObjectNudge::RIGHT_NUDGE，并且无人车确实被障碍物阻挡
+
+```c++
+bool is_close_on_right =
+    (nudge.type() == ObjectNudge::RIGHT_NUDGE) &&
+    (const_path_obstacle->PerceptionSLBoundary().start_l() - kRange <
+     frenet_point_l + vehicle_param_.left_edge_to_center());
+```
+
+这两种情况下，需要对速度做限制，因为车道限速60km/s，向左或者向右微调的时候速度肯定不允许这么大，必须要乘以一个折扣因子。对于静态障碍物，折扣系数为static_obs_nudge_speed_ratio(0.6)；对于动态障碍物，由于障碍物也是运动的，所以允许系数大一点dynamic_obs_nudge_speed_ratio为0.8。
+
+最终无人车在该规划点处的速度限制就是以上个速度的最小值，
+
+### 基于动态规划方法的速度规划--`DpStGraph::Search`完成
