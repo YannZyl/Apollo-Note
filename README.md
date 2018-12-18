@@ -1,8 +1,8 @@
-# Apollo 2.0阅读笔记
+# Apollo 3.0阅读笔记
 
-本文档主要介绍Apollo 2.0软件平台，其中各个模块结构与功能的纤细介绍。文档的目录结构为：
+本文档主要介绍Apollo 3.0软件平台，其中各个模块结构与功能的纤细介绍。文档的目录结构为：
 
-- [Apollo 2.0 软件结构简介](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md)
+- [Apollo 3.0 软件结构简介](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md)
 	- [软件结构图](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#软件结构图)
 	- [感知模块: Perception](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#感知模块)
 	- [预测模块: Prediction](https://github.com/YannZyl/Apollo-Note/blob/master/docs/apollo_software_arch.md/#预测模块)
@@ -30,16 +30,16 @@
 	- [障碍物结果融合: Result Fusion](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/obstacles_fusion_arch.md)
 	- [信号灯预处理: Traffic Light Preprocess](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/traffic_lights_preprocess.md)
 	- [信号灯处理: Traffic Light Process](https://github.com/YannZyl/Apollo-Note/blob/master/docs/perception/traffic_lights_process.md)
-	- CameraProcessSubnode(Apollo 2.5，暂不更新)
-	- CIPVSubnode(Apollo 2.5，暂不更新)
-	- LanePostProcessingSubnode(Apollo 2.5，暂不更新)
-	- AsyncFusionSubnode(Apollo 2.5，暂不更新)
-	- VisualizationSubnode(Apollo 2.5，暂不更新)
+	- CameraProcessSubnode(将逐步更新)
+	- CIPVSubnode(将逐步更新)
+	- LanePostProcessingSubnode(将逐步更新)
+	- UltrasonicObstacleSubnode(将逐步更新)
+	- AsyncFusionSubnode(将逐步更新)
+	- VisualizationSubnode(将逐步更新)
 - [预测模块笔记](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/prediction_arch.md)
-	- [(组件)ContainerManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/container_manager.md)
-	- [(组件)EvaluatorManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/evaluator_manager.md)
-	- [(组件)PredictorManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/predictor_manager.md)
-	- [(总流程)障碍物轨迹预测机制](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/prediction_progress.md)
+	- [(候选车道生成)ContainerManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/container_manager.md)
+	- [(车道概率评估)EvaluatorManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/evaluator_manager.md)
+	- [(预测轨迹拟合)PredictorManager管理器](https://github.com/YannZyl/Apollo-Note/blob/master/docs/prediction/predictor_manager.md)
 - [规划模块笔记](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/planning_arch.md)
 	- [(组件)车辆状态提供器: VehicleStateProvider](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/vehicle_state_provider.md)
 	- [(组件)规划与控制地图: Pnc Map](https://github.com/YannZyl/Apollo-Note/blob/master/docs/planning/pnc_map.md)

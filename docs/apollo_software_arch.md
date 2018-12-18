@@ -1,10 +1,10 @@
-# Apollo 2.0 模块结构说明
+# Apollo 3.0 模块结构说明
 
-本章主要介绍Apollo 2.0的软件结构，粗略的解释总体组成模块以及每个模块的功能，代码请参考([Apollo 2.0 Github](https://github.com/ApolloAuto/apollo)), 软件框架请参考([Apollo 2.0软件架构](https://github.com/ApolloAuto/apollo/blob/master/docs/specs/Apollo_2.0_Software_Architecture.md))。
+本章主要介绍Apollo 3.0的软件结构，粗略的解释总体组成模块以及每个模块的功能，代码请参考([Apollo Github](https://github.com/ApolloAuto/apollo))。
 
 ## <a name="软件结构图">软件结构图</a>
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/Apollo_2_0_Software_Arch.png)
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/Apollo_3_0_Software_Arch.png)
 
 上图每个模块都以独立的ROS node运行，相互之间的消息传递依赖ROS的消息发布与订阅机制。消息订阅(subsrcibe)等同于数据输入(data input)，而消息发布(publish)等同于数据输出(data output)。
 

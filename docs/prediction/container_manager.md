@@ -39,7 +39,7 @@ Container* ContainerManager::GetContainer(
 
 从上面代码可以看到ContrainerManager管理器存储了3类子容器，分别为：
 
-- containers_[AdapterConfig::PERCEPTION_OBSTACLES] -- 障碍物容器
+- containers_[AdapterConfig::PERCEPTION_OBSTACLES] -- 障碍物容器(重要)
 - containers_[AdapterConfig::LOCALIZATION] -- 车辆位置容器
 - containers_[AdapterConfig::PLANNING_TRAJECTORY] -- 车辆规划轨迹容器
 
@@ -100,6 +100,8 @@ void PoseContainer::Update(const localization::LocalizationEstimate& localizatio
 ```
 
 ## ObstaclesContainer障碍物容器
+
+障碍物容器除了保存障碍物的特征信息，**还有一个关键作用是计算障碍物的候选车道集，也就是未来有可能去车道集合，这个候选车道集包括两部分：当前所在车道和邻近车道。**
 
 ```c++
 void ObstaclesContainer::Insert(const ::google::protobuf::Message& message) {
@@ -238,7 +240,7 @@ message Lane {
 
 从上述图中我们可以看到原始的车道是连续的，但是在程序中无法存储连续的车道，因此Apollo采用最常用的离散采样存储，将原始的左右边界和中心线离散化保存，其中每个片段即为一个Segment2d形式的结构体，最终Lane可以使用向量来保存所有的Segment2d段。在保存过程中还有一个比较重要的属性，就是每个Segment2d都有一个start(x1,y1)和end(x2,y2)成员，这是记录该段起始点和结束点的世界坐标系坐标
 
-### SetCurrentLanes当前车道设置
+### SetCurrentLanes当前车道设置(候选车道集part1)
 
 1. 检查是否在路口中 `PredictionMap::InJunction`
 
@@ -360,7 +362,7 @@ double LineSegment2d::ProjectOntoUnit(const Vec2d &point) const {
 
 从上面代码我们就不难看到具体的解决方案
 
-### SetNearbyLanes邻接车道设置
+### SetNearbyLanes邻接车道设置(候选车道集part2)
 
 邻接车道设置与当前候选车道设置很相似，由`PredictionMap::NearbyLanesByCurrentLanes`完成原始的车道获取，获取的方式很简单
 
@@ -399,7 +401,11 @@ repeated Id right_neighbor_forward_lane_id = 11;
 
 ```
 
-### SetLaneGraphFeature车道图结构体设置
+### SetLaneGraphFeature车道图结构体设置(候选车道集离散化)
+
+车道可能行驶的车道已经由`SetCurrentLanes`和`SetNearbyLanes`确定了，但是这两个部分只能得到车道的id，我们在接下来要计算每个车道的概率，所以就需要一些车道的数值化特征，最简单的方法是将这些车道离散化，采样N个点，使用这N个点的信息来代替车道信息进行概率计算。
+
+**每个候选车道离散化采样可能得到若干条LaneSequence路径离散化序列，为什么一条候选车道会对应若干条离散化的路径序列？因为该候选车道有可能有许多后继车道，每条后继车道就产生一条不同的采样序列。**
 
 车道图结构体设置，主要是讲当前车道和邻接车道信息进行整合，得到当前路况下的一个完整的车道序列。我们通过其定义的protobuf结构了解一下车道序列LaneSequence的一些内容：
 
@@ -447,7 +453,7 @@ message LaneGraph {
 }
 ```
 
-`Obstacle::SetLaneGraphFeature`函数的作用其实就是把原先的当前车道current_lane和邻接车道nearby_lane封装到LaneSequence里面，最后保存到Feature内。但是这里做了一个处理，即截取当前车道和邻接车道的部分路畅，因为预测是有时间局部性和空间局部性的，那些太长的Lane，只要关注当前位置的邻域即可，具体的邻域如何设置？
+`Obstacle::SetLaneGraphFeature`函数的作用其实就是把原先的当前车道current_lane和邻接车道nearby_lane经过离散化采样得到一系列的LaneSequence，**其实这些LaneSequence才是真正的障碍物候选轨迹，后面的所有处理都是基于这里生成的LaneSequence完成的。**
 
 ```c++
 /// file in apollo/modules/prediction/container/obstacles/obstacle.cc
@@ -472,7 +478,11 @@ void Obstacle::SetLaneGraphFeature(Feature* feature) {
 }
 ```
 
-可以看到预测的距离(也是图的大小，换句话说也就是物体当前位置邻域半径)计算方式为：$s=vt+0.5at^2$，最基本的物理上的距离计算方式。所以`Obstacle::SetLaneGraphFeature`通过对当前车道CurrentLane和邻接车道NearbyLane截取其邻域，可以降低存储，合情合理。通过截取邻域，那么就可以对截取到的所有Lane(包括CurrentLane和NearbyLane)进行Lane的分割，分割成一个个的LaneSegment，与HD Map中的Segment2d基本类似。(区别：Lane+Segment2d可以存储整条车道，用于HD Map中； LaneSequence+LaneSegment可以存储截取的车道，更加轻量级)
+**Question： 如何确定预测的长度，或者叫时间？**
+
+可以看到预测的距离由障碍物的速度决定计算方式为：$s=vt+0.5at^2$，最基本的物理上的距离计算方式，速度越大，预测的轨迹LaneSequence越长（也就是在候选车道上采样的距离越大）
+
+离散化过程由函数`ObstacleClusters::GetLaneGraph`完成，主要的工作是根据要被离散化的候选车道以及预测的长度s，将车道分成一段段的Segment并且每隔2m采样一个点，得到一条有若干段Segment(每段若干点LanePoint)的离散化车道或者叫轨迹序列。**如果预测长度超过车道的剩余长度，需要继续在其后继车道上采样，故可以得到若干条LaneSequence**
 
 在LaneSequence截取和LaneSegment分割的过程中，代码也相对比较简单，我们可以看一眼代码随便对他做一个解释，便于初学者理解。
 
@@ -521,21 +531,21 @@ void RoadGraph::ComputeLaneSequence(
 
 **Step 1 设置LaneSequence的id，起始累计距离，总长度**
 
-注意，下面`if (accumulated_s + lane_info_ptr->total_length() - start_s >= length_)`这个if-else对意思是表明，如果当前物体所在的Lane起始累计距离是start_s，前面计算了邻域为length_($s=vt+0.5at^2$)，路得总长度为total_length。如果`total_length - start_s >= length_`，说明经过这个预测的前进长度以后物体还是在这条Lane上，所以end_s就变为start_s + length_；否者物体就超出了这条Lane，那么end_s也就是Lane的终点total_length. (这里的accumulated_s是需要分段才用到，下面将会提到)
+注意，下面`if (accumulated_s + lane_info_ptr->total_length() - start_s >= length_)`这个if-else对意思是表明，如果当前物体所在的Lane起始累计距离是start_s，前面计算了邻域为length_($s=vt+0.5at^2$)，当前车道的总长度为total_length。如果`total_length - start_s >= length_`，说明经过这个预测的前进长度以后物体还是在这条Lane上，所以end_s就变为start_s + length_；否者物体就超出了这条Lane，那么end_s也就是Lane的终点total_length. (这里的accumulated_s是需要分段才用到，下面将会提到)
 
 **Step 2 计算LaneSequence**
 
-还是一个if-else结构，当`total_length - start_s >= length_`时，说明物体下一时刻很大可能依旧在这条Lane上，所以当前的LaneSequence就是这条Lane的[start_s, start_s+length_]这段路；如果`total_length - start_s < length_ && lane_info_ptr->lane().successor_id_size() == 0`说明预测前进长度就要超出这条Lane，但是这条Lane没有后继的Lane(言外之意，这条路没有变道的可能)，那么LaneSequence也就只能设置[start_s, total_length]这段路了，其长度是不到length_的。这种情况下LaneGraph只有一个LaneSequence，同时LaneSequence就只有一个LaneSegment
+还是一个if-else结构，当`total_length - start_s >= length_`时，说明物体下一时刻很大可能依旧在这条Lane上，所以当前的LaneSequence就是这条Lane的[start_s, start_s+length_]这段路；如果`total_length - start_s < length_ && lane_info_ptr->lane().successor_id_size() == 0`说明预测前进长度就要超出这条Lane，但是这条Lane没有后继的Lane(言外之意，这条路没有换道的可能)，那么LaneSequence也就只能设置[start_s, total_length]这段路了，其长度是不到length_的。这种情况下LaneGraph只有一个LaneSequence，同时LaneSequence就只有一个LaneSegment
 
-如果`total_length - start_s < length_ && lane_info_ptr->lane().successor_id_size() > 0`说明前进长度要超出这条Lane，但是物体可以变道继续前进，那么这时候一个LaneGraph就有多个LaneSequence，并且LaneSequence就有多个LaneSegment，每个LandSegment的lane_id不一定相同，因为存在物体变道的可能性。这种情况下accumulated_s就起到作用了，他记录了物体前面n个LaneSegment一共的距离，如果物体前面有一个LaneSegment，长度为length_1，那么变道后，只要计算length_ - length_1长度的LaneSegment即可。所以修正后，Step 1中的判断条件就变为`total_length - start_s >= length_ - accumulated_s`，也就是代码中的形式。
+如果`total_length - start_s < length_ && lane_info_ptr->lane().successor_id_size() > 0`说明前进长度要超出这条Lane，但是物体可以换道继续前进，那么这时候一个LaneGraph就有多个LaneSequence，并且LaneSequence就有多个LaneSegment，同一条LaneSequence中每个LandSegment的lane_id不一定相同，因为存在物体换道的可能性。这种情况下accumulated_s就起到作用了，他记录了物体前面n个LaneSegment一共的距离，如果物体前面有一个LaneSegment，长度为length_1，那么换道后，只要计算length_ - length_1长度的LaneSegment即可。所以修正后，Step 1中的判断条件就变为`total_length - start_s >= length_ - accumulated_s`，也就是代码中的形式。
 
 下面将举个例子说明上述LaneSequence的计算过程：
 
 1. 假设当前物体所在的车道Lane_1的累计距离start_s=100, 总长度130，这时候经过预测得到的邻域范围为length_=20，由于在前进20米以后不会超出这条Lane，所以得到的LaneSequence只有一个LaneSegment，start_s=100, end_s=120, total_length=130
 
-2. 假设当前物体所在的车道Lane_1的累计距离start_s=100, 总长度110，Lane_1不能变道(successor_id_size()==0)！这时候经过预测得到的邻域范围为length_=20，由于在前进20米以后超出这条Lane，但由于不能变道，所以得到的LaneSequence只有一个LaneSegment，start_s=100, end_s=110, total_length=110
+2. 假设当前物体所在的车道Lane_1的累计距离start_s=100, 总长度110，Lane_1不能换道(successor_id_size()==0)！这时候经过预测得到的邻域范围为length_=20，由于在前进20米以后超出这条Lane，但由于不能变道，所以得到的LaneSequence只有一个LaneSegment，start_s=100, end_s=110, total_length=110
 
-3. 假设当前物体所在的车道Lane_1的累计距离start_s=100, 总长度110，Lane_1可以变道，变道至(Lane_2: start_s=0, total_length=50; Lane_3: start_s=0, total_length=100)！这时候经过预测得到的邻域范围为length_=20，由于在前进20米以后超出这条Lane，但可以变道，所以可以得到2个LaneSequence，每个LaneSequence有2个LaneSegment，分别是：
+3. 假设当前物体所在的车道Lane_1的累计距离start_s=100, 总长度110，Lane_1可以换道，换道至(Lane_2: start_s=0, total_length=50; Lane_3: start_s=0, total_length=100)！这时候经过预测得到的邻域范围为length_=20，由于在前进20米以后超出这条Lane，但可以换道，所以可以得到2个LaneSequence，每个LaneSequence有2个LaneSegment，分别是：
 
 - LaneSequence 1
   - LaneSegment 1: lane_id=Lane_1, start_s=100, end_s=110, total_length=110
@@ -544,7 +554,7 @@ void RoadGraph::ComputeLaneSequence(
   - LaneSegment 1: lane_id=Lane_1, start_s=100, end_s=110, total_length=110
   - LaneSegment 2: lane_id=Lane_3, start_s=0, end_s=10, total_length=100
 
-**其实说白了LaneSequence就是当前情况下物体可能的前进方案，有可能是Lane_1到Lane_2(LaneSequence 1)，也可能是Lane_1到Lane_3(LaneSequence 2)，每种方案中物体经过的路段就是LaneSegment。**
+**其实说白了LaneSequence就是当前情况下物体可能的前进方案，有可能是Lane_1到Lane_2(LaneSequence 1)，也可能是Lane_1到Lane_3(LaneSequence 2)，每种方案中物体经过的路段就是LaneSegment。注意这里的换道不是变道的意思，预测模块不考虑相邻车道之间的主动变道，只考虑路都到尽头以后的被动换道，降低问题复杂性**
 
 上面是LaneSequence的构建过程，如果当前已经存在了这条物体Lane对应的LaneGraph，那么只要修正一下LaneGraph里面的LaneSequence即可，修正过程只要修改LaneSequence的第一个LaneSegment的start_s即可，后续只要刷新一下里面的数据就行。当完成了LaneGraph的构建，当前车道和邻接车道截取邻域以后，下一步只要对LaneGraph里面LaneSequence中的LaneSegment分段离散化保存即可，E.G. 如果LaneSegment长度为20，那么通过采样，每2m一个点LanePoint，就可以将这条LaneSegment离散化10个点保存。**规定一个LaneSequence中所有的LaneSegment点最多不超过20个。**
 
@@ -743,4 +753,7 @@ void ADCTrajectoryContainer::SetLaneSequence() {
 
 3. `SetLaneSequence`设置当前位置的车道线信息。
 
+**这里的轨迹主要用于后续的交互**
+
 总结一下ContainerManeager管理器的作用：信息的存储！其中很重要的环节就是对每个障碍物都进行LaneGraph的构建，LaneSequence表明障碍物运动的方案；而LaneSequence里面的vector<LaneSegment>则表示了这个方案中，物体前进的车道段。
+
