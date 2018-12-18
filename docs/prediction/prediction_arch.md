@@ -51,7 +51,7 @@ Status Prediction::Init() {
 
 ## Prediction预测流程介绍
 
-![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/prediction/prediction_arch.md)
+![img](https://github.com/YannZyl/Apollo-Note/blob/master/images/prediction/prediction_arch.png)
 
 从上图可以看到总体来说Prediction分为三个阶段，分别由三个Manager管理。
 
