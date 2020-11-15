@@ -1,6 +1,6 @@
 # 规划与控制地图: Pnc Map
 
-pnc map其实和高精地图hd map没有关系，后者是专门为规划与控制模块设计的库函数，在hd map层次之上，负责一些地图相关信息的处理。例如查询车辆可能的形式路由段(list<RouteSegments>)，然后对每个路由段合成一个路径Path，这是pnc map最重要的功能。
+pnc map其实和高精地图hd map没有关系，后者是专门为规划与控制模块设计的库函数，在hd map层次之上，负责一些地图相关信息的处理。例如查询车辆可能的行驶路由段(list<RouteSegments>)，然后对每个路由段合成一个路径Path，这是pnc map最重要的功能。
 
 pnc map目前被封装在指引线提供器ReferenceLineProvider中，但是由于其功能比较集中，我们单独将他拿出来讲解。规划控制地图pnc map主要的功能有三个：
 
